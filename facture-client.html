@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Système de Facturation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, query, where, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- CONFIGURATION DÉVELOPPEUR ---
+        const CURRENT_CLIENT_ID = "Boutique_eric"; // <--- CHANGEZ UNIQUEMENT CECI POUR CHAQUE CLIENT
+        const MASTER_PIN = "9999"; // Code pour ouvrir le panel admin
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBrQy4VuncezPeZ6vPTaiTmTWxqTVQm1ZI",
+            authDomain: "commerce-3ae6e.firebaseapp.com",
+            projectId: "commerce-3ae6e",
+            storageBucket: "commerce-3ae6e.firebasestorage.app",
+            messagingSenderId: "946906333487",
+            appId: "1:946906333487:web:d6cd511e80a3a0d0b921da"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // --- CHARGEMENT DYNAMIQUE DU CLIENT ---
+        async function initApp() {
+            try {
+                const docRef = doc(db, "clients", CURRENT_CLIENT_ID);
+                const docSnap = await getDoc(docRef);
+                
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if(data.statut_abonnement !== "actif") {
+                        document.body.innerHTML = `<div class='flex flex-col items-center justify-center h-screen bg-red-50 text-red-800 p-6 text-center'>
+                            <h1 class='text-4xl font-black mb-4'>SERVICE SUSPENDU</h1>
+                            <p class='text-xl'>L'abonnement de cet établissement a expiré ou est suspendu.</p>
+                            <p class='mt-4 font-bold'>Contactez le développeur pour réactivation.</p>
+                        </div>`;
+                        return;
+                    }
+                    // Injection des données dans la facture
+                    document.getElementById('displayNom').innerText = data.nom;
+                    document.getElementById('displayActivite').innerText = data.activite || "Commerce";
+                    document.getElementById('displayTel').innerText = data.tel || "Tél: ...";
+                    document.getElementById('displayVille').innerText = data.ville || "Burkina Faso";
+                } else {
+                    console.error("Client non trouvé dans Firebase");
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // --- CONNEXION CAISSIER (Filtrée par client) ---
+        window.verifierPIN = async () => {
+            const pinSaisi = document.getElementById('pinInput').value.trim();
+            
+            if (pinSaisi === MASTER_PIN) {
+                document.getElementById('adminPanel').classList.remove('hidden');
+                document.getElementById('loginModal').style.display = 'none';
+                return;
+            }
+
+            try {
+                // On cherche le caissier qui a ce PIN ET qui appartient à ce client
+                const q = query(collection(db, "caissiers"), 
+                            where("pin", "==", pinSaisi), 
+                            where("clientId", "==", CURRENT_CLIENT_ID));
+                const querySnapshot = await getDocs(q);
+
+                if (!querySnapshot.empty) {
+                    const caissier = querySnapshot.docs[0].data();
+                    document.getElementById('nomCaissier').innerText = caissier.nom;
+                    document.getElementById('loginModal').style.display = 'none';
+                    document.getElementById('appContent').classList.remove('opacity-20', 'pointer-events-none');
+                } else {
+                    alert("PIN incorrect ou caissier non enregistré pour cet établissement.");
+                }
+            } catch (e) { alert("Erreur de connexion."); }
+        };
+
+        // --- AJOUTER CAISSIER (Dans le panel client) ---
+        window.ajouterCaissierLocal = async () => {
+            const nom = document.getElementById('newCaissierNom').value;
+            const pin = document.getElementById('newCaissierPin').value;
+            if(!nom || pin.length !== 4) return alert("Données invalides");
+
+            await addDoc(collection(db, "caissiers"), {
+                nom: nom,
+                pin: pin,
+                clientId: CURRENT_CLIENT_ID // <--- Liaison cruciale
+            });
+            alert("Caissier ajouté !");
+            location.reload();
+        };
+
+        // --- VALIDER VENTE (Liaison client) ---
+        window.validerVente = async () => {
+            const total = parseFloat(document.getElementById('grandTotal').innerText.replace(/[^0-9]/g, ''));
+            if(!total) return;
+
+            await addDoc(collection(db, "ventes"), {
+                clientId: CURRENT_CLIENT_ID,
+                caissier: document.getElementById('nomCaissier').innerText,
+                montant: total,
+                date: new Date()
+            });
+            window.print();
+            location.reload();
+        };
+
+        window.onload = initApp;
+    </script>
+    <style>
+        @media print { .no-print { display: none !important; } #facture-ticket { border: none; width: 80mm; margin: 0; } }
+        .dotted-border { border-bottom: 1px dotted black; }
+    </style>
+</head>
+<body class="bg-gray-100 font-serif">
+
+    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded shadow-xl text-center">
+            <h2 class="font-bold mb-4 uppercase">Identification</h2>
+            <input type="password" id="pinInput" maxlength="4" placeholder="PIN" class="border-2 border-blue-500 p-2 text-center text-3xl w-40 mb-4 block mx-auto rounded font-bold">
+            <button onclick="verifierPIN()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold w-full uppercase">Entrer</button>
+        </div>
+    </div>
+
+    <div id="adminPanel" class="hidden fixed inset-0 bg-white z-[60] p-6 overflow-y-auto">
+        <h1 class="text-xl font-bold mb-4 border-b">Gestion de l'établissement</h1>
+        <div class="space-y-6">
+            <div class="bg-blue-50 p-4 rounded">
+                <h2 class="font-bold mb-2">Ajouter un Caissier</h2>
+                <input type="text" id="newCaissierNom" placeholder="Nom du caissier" class="border p-2 mr-2">
+                <input type="password" id="newCaissierPin" maxlength="4" placeholder="PIN" class="border p-2 mr-2 w-24">
+                <button onclick="ajouterCaissierLocal()" class="bg-blue-600 text-white px-4 py-2 rounded">OK</button>
+            </div>
+            <button onclick="location.reload()" class="w-full bg-gray-800 text-white p-3 rounded font-bold uppercase">Retour à la caisse</button>
+        </div>
+    </div>
+
+    <div id="appContent" class="opacity-20 pointer-events-none p-4">
+        <div id="facture-ticket" class="max-w-[80mm] mx-auto bg-white p-4 border border-black shadow-sm">
+            <div class="flex justify-between items-start border-b-2 border-black pb-2 text-[10px]">
+                <div>
+                    <h1 id="displayNom" class="text-xl font-black leading-none uppercase">...</h1>
+                    <p id="displayActivite" class="mt-1 font-bold">...</p>
+                    <p id="displayTel">...</p>
+                    <p id="displayVille">...</p>
+                </div>
+                <div class="border border-black text-center w-24">
+                    <div class="grid grid-cols-3 border-b border-black text-[8px] font-bold">
+                        <span>J</span><span>M</span><span>A</span>
+                    </div>
+                    <div id="date-display" class="grid grid-cols-3 p-1 font-bold"></div>
+                </div>
+            </div>
+            
+            <div class="flex justify-between items-center my-2 italic text-[10px]">
+                <span>C: <b id="nomCaissier"></b></span>
+                <span class="text-lg font-black tracking-tighter uppercase">Facture</span>
+            </div>
+
+            <table class="w-full border-collapse border border-black text-[10px] mt-2">
+                <thead><tr class="bg-gray-100 border-b border-black font-bold">
+                    <th class="border-r border-black p-1 text-left">Désignation</th>
+                    <th class="border-r border-black p-1">Qté</th>
+                    <th class="p-1 text-right">Total</th>
+                </tr></thead>
+                <tbody id="lignes-facture">
+                    <tr class="border-b border-gray-200">
+                        <td class="border-r border-black"><input type="text" class="w-full px-1 outline-none uppercase"></td>
+                        <td class="border-r border-black"><input type="number" class="w-full text-center outline-none qte" value="1" oninput="calculer()"></td>
+                        <td class="text-right px-1 font-bold total-ligne">0</td>
+                        <input type="hidden" class="pu" value="0"> </tr>
+                </tbody>
+            </table>
+            
+            <button onclick="addRow()" class="no-print bg-gray-200 px-2 py-1 text-[10px] mt-2">+ Ligne</button>
+
+            <div class="mt-4 border-t-2 border-black pt-2">
+                <div class="flex justify-between font-black text-sm bg-gray-50 p-1">
+                    <span>TOTAL</span>
+                    <span><span id="grandTotal">0</span> F</span>
+                </div>
+                <p id="lettres" class="text-[9px] mt-2 italic uppercase">Arrêté à la somme de...</p>
+            </div>
+        </div>
+
+        <button onclick="validerVente()" class="no-print block w-[80mm] mx-auto bg-green-600 text-white py-4 mt-4 rounded-xl font-black shadow-lg uppercase">Imprimer</button>
+    </div>
+
+    <script>
+        // Logique de calcul simple
+        function addRow() {
+            const row = `<tr class="border-b border-gray-200">
+                <td class="border-r border-black"><input type="text" class="w-full px-1 outline-none uppercase"></td>
+                <td class="border-r border-black"><input type="number" class="w-full text-center outline-none qte" value="1" oninput="calculer()"></td>
+                <td class="text-right px-1 font-bold total-ligne">0</td>
+            </tr>`;
+            document.getElementById('lignes-facture').insertAdjacentHTML('beforeend', row);
+        }
+        function calculer() {
+            let total = 0;
+            // Note: Simplifié pour l'exemple, ajoutez le P.U si nécessaire
+            document.querySelectorAll('#lignes-facture tr').forEach(tr => {
+                const q = parseFloat(tr.querySelector('.qte').value) || 0;
+                // Ici on pourrait ajouter la saisie du P.U
+                total += q; 
+            });
+            document.getElementById('grandTotal').innerText = total.toLocaleString();
+        }
+        const d = new Date();
+        document.getElementById('date-display').innerHTML = `<span>${d.getDate()}</span><span>${d.getMonth()+1}</span><span>${d.getFullYear()}</span>`;
+    </script>
+</body>
+</html>
