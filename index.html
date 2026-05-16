@@ -458,8 +458,13 @@ function _unlock(key) { _locks[key] = false; }
                 <p id="displayActivite" class="text-[8px] text-amber-400 font-bold mt-0.5"></p>
             </div>
             <div class="flex items-center gap-2">
-                <!-- Indicateur sync Firestore -->
                 <div id="utilisateursEnLigne" title="Synchronisation cloud"></div>
+                <!-- ✅ NOUVEAU : bouton historique avec badge dettes -->
+                <button onclick="ouvrirHistoriquePanel()" title="Historique"
+                        class="relative bg-slate-700 hover:bg-slate-600 text-white text-[10px] px-2 py-1 rounded-full font-black transition-colors">
+                    📋
+                    <span id="dettesBadge" class="hidden absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-black min-w-[14px] h-[14px] rounded-full flex items-center justify-center px-0.5 leading-none">0</span>
+                </button>
                 <button onclick="ouvrirPanelProprietaire()"
                         class="bg-amber-700 hover:bg-amber-600 text-white text-[10px] px-2 py-1 rounded-full font-black transition-colors" title="Propriétaire">👑</button>
                 <button onclick="deconnexion()"
@@ -481,19 +486,26 @@ function _unlock(key) { _locks[key] = false; }
                 </div>
             </div>
 
-            <!-- Stats -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
+            <!-- Stats CA + Dettes -->
+            <div class="grid grid-cols-2 gap-2 mb-2">
                 <div class="bg-slate-900 p-3 rounded-xl text-center">
-                    <p class="text-[8px] text-slate-400 uppercase font-bold">Aujourd&apos;hui</p>
+                    <p class="text-[8px] text-slate-400 uppercase font-bold">Aujourd'hui</p>
                     <p id="valJour" class="text-green-400 font-black text-sm mt-1">0 F</p>
                 </div>
                 <div class="bg-slate-900 p-3 rounded-xl text-center">
-                    <p class="text-[8px] text-slate-400 uppercase font-bold">Ce mois</p>
-                    <p id="valMois" class="text-sky-400 font-black text-sm mt-1">0 F</p>
+                    <p class="text-[8px] text-slate-400 uppercase font-bold">Cette semaine</p>
+                    <p id="valSemaine" class="text-sky-400 font-black text-sm mt-1">0 F</p>
                 </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mb-4">
                 <div class="bg-slate-900 p-3 rounded-xl text-center">
-                    <p class="text-[8px] text-slate-400 uppercase font-bold">Cette année</p>
-                    <p id="valAn" class="text-amber-400 font-black text-sm mt-1">0 F</p>
+                    <p class="text-[8px] text-slate-400 uppercase font-bold">Ce mois</p>
+                    <p id="valMois" class="text-amber-400 font-black text-sm mt-1">0 F</p>
+                </div>
+                <div class="bg-red-950 border border-red-800 p-3 rounded-xl text-center cursor-pointer hover:bg-red-900 transition-colors" onclick="ouvrirHistoriquePanel('dettes')">
+                    <p class="text-[8px] text-red-400 uppercase font-bold">Dettes impayées</p>
+                    <p id="valDettes" class="text-red-400 font-black text-sm mt-1">0 F</p>
+                    <p id="nbDettes" class="text-red-500 text-[9px] mt-0.5">0 facture(s)</p>
                 </div>
             </div>
 
@@ -663,11 +675,18 @@ function _unlock(key) { _locks[key] = false; }
                            class="flex-1 bg-transparent border-b border-dotted border-gray-400 outline-none font-bold uppercase text-[11px] px-1 placeholder-gray-300"
                            placeholder="Nom du client">
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-1 mb-1">
                     <span class="font-bold text-gray-500 whitespace-nowrap">Adresse :&nbsp;</span>
                     <input type="text" id="clientAdresse"
                            class="flex-1 bg-transparent border-b border-dotted border-gray-400 outline-none text-[10px] px-1 placeholder-gray-300"
                            placeholder="Ville / Adresse (optionnel)">
+                </div>
+                <!-- ✅ NOUVEAU : téléphone client (pour rappel WA dettes) -->
+                <div class="no-print flex items-center gap-1">
+                    <span class="font-bold text-gray-500 whitespace-nowrap">📱 Tél :&nbsp;</span>
+                    <input type="tel" id="clientTel"
+                           class="flex-1 bg-transparent border-b border-dotted border-gray-400 outline-none text-[10px] px-1 placeholder-gray-300"
+                           placeholder="Téléphone client (pour rappel dette)">
                 </div>
             </div>
 
@@ -736,18 +755,24 @@ function _unlock(key) { _locks[key] = false; }
         </div>
 
         <!-- Boutons actions -->
-        <div class="grid grid-cols-3 gap-2 w-full max-w-[80mm] mx-auto mt-4">
-            <button onclick="validerVente()"
+        <div class="grid grid-cols-2 gap-2 w-full max-w-[80mm] mx-auto mt-4">
+            <button onclick="ouvrirModalPaiement('regle')"
                     class="no-print bg-green-600 hover:bg-green-700 active:scale-95 text-white py-4 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
-                <span class="text-2xl">✅</span><span class="text-xs">VALIDER</span>
+                <span class="text-2xl">✅</span><span class="text-xs">RÉGLÉ</span>
             </button>
+            <button onclick="ouvrirModalPaiement('dette')"
+                    class="no-print bg-red-600 hover:bg-red-700 active:scale-95 text-white py-4 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <span class="text-2xl">📒</span><span class="text-xs">DETTE</span>
+            </button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 w-full max-w-[80mm] mx-auto mt-2">
             <button onclick="imprimerFactureActuelle()"
-                    class="no-print bg-amber-600 hover:bg-amber-500 active:scale-95 text-white py-4 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
-                <span class="text-2xl">🖨️</span><span class="text-xs">TICKET</span>
+                    class="no-print bg-amber-600 hover:bg-amber-500 active:scale-95 text-white py-3 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <span class="text-xl">🖨️</span><span class="text-xs">TICKET</span>
             </button>
             <button onclick="validerEtPDF()"
-                    class="no-print bg-purple-600 hover:bg-purple-700 active:scale-95 text-white py-4 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
-                <span class="text-2xl">📥</span><span class="text-xs">PDF</span>
+                    class="no-print bg-purple-600 hover:bg-purple-700 active:scale-95 text-white py-3 rounded-xl font-black shadow-xl flex flex-col items-center justify-center gap-1 transition-all">
+                <span class="text-xl">📥</span><span class="text-xs">PDF</span>
             </button>
         </div>
         <div class="w-full max-w-[80mm] mx-auto mt-2">
@@ -758,6 +783,148 @@ function _unlock(key) { _locks[key] = false; }
         </div>
     </div>
 </div><!-- fin #appContainer -->
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL PAIEMENT — Réglé ou Dette
+═══════════════════════════════════════════════════════ -->
+<div id="modalPaiement" class="hidden fixed inset-0 bg-black/85 z-50 flex items-end justify-center p-4">
+    <div class="bg-slate-900 rounded-2xl p-5 w-full max-w-sm border border-slate-700 shadow-2xl mb-2">
+        <h3 id="modalPaiementTitre" class="text-white font-black text-base mb-1 text-center">💳 Mode de règlement</h3>
+        <p id="modalPaiementTotal" class="text-green-400 font-black text-xl text-center mb-4">0 F</p>
+
+        <!-- Mode de paiement -->
+        <p class="text-slate-400 text-[10px] uppercase font-bold mb-2">Mode de paiement</p>
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <button onclick="_selectModePaiement(this,'cash')"    data-mode="cash"    class="mode-btn bg-slate-700 hover:bg-slate-600 text-white text-xs py-2.5 rounded-xl font-bold transition-colors border-2 border-transparent">💵 Cash</button>
+            <button onclick="_selectModePaiement(this,'orange')"  data-mode="orange"  class="mode-btn bg-slate-700 hover:bg-slate-600 text-white text-xs py-2.5 rounded-xl font-bold transition-colors border-2 border-transparent">🔶 Orange</button>
+            <button onclick="_selectModePaiement(this,'moov')"    data-mode="moov"    class="mode-btn bg-slate-700 hover:bg-slate-600 text-white text-xs py-2.5 rounded-xl font-bold transition-colors border-2 border-transparent">🔵 Moov</button>
+        </div>
+
+        <!-- Acompte (visible seulement si dette) -->
+        <div id="acompteSection" class="hidden mb-4">
+            <p class="text-slate-400 text-[10px] uppercase font-bold mb-1">Acompte versé (optionnel)</p>
+            <input type="number" id="acompteInput" placeholder="0" min="0"
+                   class="w-full bg-slate-800 border border-slate-600 text-white text-center font-black text-lg p-3 rounded-xl outline-none focus:border-red-500"
+                   oninput="majResteAPayer()">
+            <div class="flex justify-between text-xs mt-2">
+                <span class="text-slate-400">Reste à payer :</span>
+                <span id="resteAPayer" class="text-red-400 font-black">—</span>
+            </div>
+        </div>
+
+        <!-- Note client (optionnel) -->
+        <input type="text" id="noteDetteInput" placeholder="Note (ex: rappel vendredi…)" maxlength="80"
+               class="w-full bg-slate-800 border border-slate-600 text-white placeholder-slate-500 text-xs p-2.5 rounded-xl outline-none focus:border-amber-500 mb-4">
+
+        <div class="grid grid-cols-2 gap-3">
+            <button onclick="fermerModalPaiement()"
+                    class="bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl font-bold text-sm transition-colors">Annuler</button>
+            <button id="btnConfirmerPaiement" onclick="confirmerPaiement()"
+                    class="bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-black text-sm transition-colors">✅ Confirmer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     PANEL HISTORIQUE — accessible depuis caisse
+═══════════════════════════════════════════════════════ -->
+<div id="historiquePanel" class="hidden fixed inset-0 bg-slate-950 z-40 overflow-y-auto">
+    <div class="max-w-xl mx-auto p-4">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-950 py-2 z-10">
+            <h2 class="text-white font-black text-base">📋 Historique des commandes</h2>
+            <button onclick="document.getElementById('historiquePanel').classList.add('hidden')"
+                    class="bg-red-700 text-white px-3 py-1 rounded-full text-xs font-black">✕</button>
+        </div>
+
+        <!-- Stats résumé -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="bg-slate-900 p-2.5 rounded-xl text-center">
+                <p class="text-[8px] text-slate-400 uppercase font-bold">Ventes</p>
+                <p id="hpNbVentes" class="text-white font-black text-sm mt-0.5">0</p>
+            </div>
+            <div class="bg-slate-900 p-2.5 rounded-xl text-center">
+                <p class="text-[8px] text-green-400 uppercase font-bold">Encaissé</p>
+                <p id="hpTotalRegle" class="text-green-400 font-black text-sm mt-0.5">0 F</p>
+            </div>
+            <div class="bg-red-950 border border-red-800 p-2.5 rounded-xl text-center">
+                <p class="text-[8px] text-red-400 uppercase font-bold">Dettes</p>
+                <p id="hpTotalDettes" class="text-red-400 font-black text-sm mt-0.5">0 F</p>
+            </div>
+        </div>
+
+        <!-- Filtres période + statut -->
+        <div class="flex flex-wrap gap-2 mb-3">
+            <button onclick="filtrerHistoriquePeriode('jour')"  id="hpFiltreJour"  class="hp-filtre bg-amber-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">Aujourd'hui</button>
+            <button onclick="filtrerHistoriquePeriode('semaine')" id="hpFiltreSemaine" class="hp-filtre bg-slate-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">Semaine</button>
+            <button onclick="filtrerHistoriquePeriode('mois')"  id="hpFiltreMois"  class="hp-filtre bg-slate-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">Mois</button>
+            <button onclick="filtrerHistoriquePeriode('tout')"  id="hpFiltreTout"  class="hp-filtre bg-slate-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">Tout</button>
+            <button onclick="filtrerHistoriqueStatut('tout')"   id="hpStatutTout"  class="hp-statut bg-slate-600 text-white text-[10px] px-3 py-1 rounded-full font-bold">🔘 Tous</button>
+            <button onclick="filtrerHistoriqueStatut('regle')"  id="hpStatutRegle" class="hp-statut bg-slate-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">✅ Réglés</button>
+            <button onclick="filtrerHistoriqueStatut('dette')"  id="hpStatutDette" class="hp-statut bg-slate-700 text-white text-[10px] px-3 py-1 rounded-full font-bold">📒 Dettes</button>
+        </div>
+
+        <!-- Recherche -->
+        <div class="relative mb-3">
+            <input type="text" id="hpRecherche" placeholder="🔍 Rechercher client, numéro, montant…"
+                   oninput="afficherHistoriquePanel()"
+                   class="w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 text-xs p-3 rounded-xl outline-none focus:border-amber-500">
+        </div>
+
+        <!-- Liste ventes -->
+        <div id="hpListeVentes" class="space-y-2"></div>
+    </div>
+</div>
+
+<!-- MODAL DÉTAIL VENTE -->
+<div id="modalDetailVente" class="hidden fixed inset-0 bg-black/85 z-50 flex items-end justify-center p-3">
+    <div class="bg-slate-900 rounded-2xl p-4 w-full max-w-sm border border-slate-700 shadow-2xl mb-2 max-h-[85vh] overflow-y-auto">
+        <div class="flex justify-between items-start mb-3">
+            <div>
+                <h3 id="dvNumero" class="text-white font-black text-sm"></h3>
+                <p id="dvDate" class="text-slate-400 text-[10px] mt-0.5"></p>
+            </div>
+            <button onclick="document.getElementById('modalDetailVente').classList.add('hidden')"
+                    class="bg-slate-700 text-white px-2 py-1 rounded-full text-xs font-black">✕</button>
+        </div>
+        <div class="flex justify-between text-xs mb-3 bg-slate-800 p-2 rounded-xl">
+            <span class="text-slate-400">Client :</span><span id="dvClient" class="text-white font-bold text-right"></span>
+        </div>
+        <div class="flex justify-between text-xs mb-3 bg-slate-800 p-2 rounded-xl">
+            <span class="text-slate-400">Caissier :</span><span id="dvCaissier" class="text-white text-right"></span>
+        </div>
+        <div class="flex justify-between text-xs mb-3 bg-slate-800 p-2 rounded-xl">
+            <span class="text-slate-400">Paiement :</span><span id="dvMode" class="text-white text-right"></span>
+        </div>
+        <!-- Lignes articles -->
+        <table class="w-full text-xs mb-3">
+            <thead><tr class="text-slate-400 border-b border-slate-700">
+                <th class="text-left pb-1 font-bold">Article</th>
+                <th class="text-center pb-1 font-bold">Qté</th>
+                <th class="text-right pb-1 font-bold">Total</th>
+            </tr></thead>
+            <tbody id="dvLignes" class="text-white"></tbody>
+        </table>
+        <div class="border-t border-slate-700 pt-2 space-y-1">
+            <div class="flex justify-between text-xs"><span class="text-slate-400">Total :</span><span id="dvTotal" class="text-white font-black"></span></div>
+            <div id="dvAcompteRow" class="hidden flex justify-between text-xs"><span class="text-slate-400">Acompte :</span><span id="dvAcompte" class="text-amber-400 font-black"></span></div>
+            <div id="dvResteRow" class="hidden flex justify-between text-xs"><span class="text-slate-400">Reste dû :</span><span id="dvReste" class="text-red-400 font-black"></span></div>
+            <div id="dvNote" class="hidden text-[10px] text-slate-400 italic mt-1"></div>
+        </div>
+        <!-- Actions -->
+        <div class="grid grid-cols-2 gap-2 mt-4">
+            <button id="dvBtnWA" onclick="rappelDetteWhatsApp(null)" class="hidden bg-[#25D366] hover:bg-[#128C7E] text-white py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-colors">
+                📱 Rappel WA
+            </button>
+            <button id="dvBtnMarquerPaye" onclick="marquerVentePaye(null)" class="hidden bg-amber-600 hover:bg-amber-500 text-white py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-colors">
+                ✅ Marquer payé
+            </button>
+            <button onclick="imprimerVenteDetail()" class="col-span-2 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-colors">
+                🖨️ Imprimer ticket
+            </button>
+        </div>
+    </div>
+</div>
 
 
 <!-- ══════════════════════════════════════════════════════
@@ -880,7 +1047,7 @@ const ETABLISSEMENT_ID = localStorage.getItem('dfp_etablissement_id') || '';
 // ── PIN admin developpeur (accès panel secret)
 // ✅ OPTIMISÉ : comparaison via hash SHA-256 (le PIN n'est plus lisible en clair)
 // Pour changer le PIN : remplacez le hash ci-dessous par sha256(votre_nouveau_pin)
-const DEV_PIN_HASH = 'b1e1e8e8a6e4c2e6a9e1b9b9b1e1e8e8a6e4c2e6a9e1b9b9b1e1e8e8a6e4c2e6'; // sha256('761278') — À REMPLACER
+const DEV_PIN_HASH = '305a0303f148c66ec78dbaa6306ddb9518be8fde1c08e2e7b92ff768bd1bf16f'; // sha256('761278')
 async function _checkDevPin(pin) {
     if (!pin) return false;
     try {
@@ -1392,8 +1559,10 @@ function reinitialiserFacture() {
     document.getElementById('lettres').textContent = 'Arrêté la présente facture à la somme de...';
     const cn = document.getElementById('clientNom');
     const ca = document.getElementById('clientAdresse');
+    const ct = document.getElementById('clientTel');
     if (cn) cn.value = '';
     if (ca) ca.value = '';
+    if (ct) ct.value = '';
     genererNumerFacture();
 }
 
@@ -1427,15 +1596,40 @@ function partagerWhatsApp() {
 let _filtreActif = 'jour';
 
 function ecouterVentes() {
-    const unsubVentes = FB.ventes()
-        .orderBy('createdAt', 'desc')
-        .limit(200)
-        .onSnapshot(snap => {
+    // ✅ FIX : fallback automatique si l'index orderBy manque
+    function _demarrerEcoute(avecOrderBy) {
+        var query = avecOrderBy
+            ? FB.ventes().orderBy('createdAt', 'desc').limit(200)
+            : FB.ventes().limit(200);
+
+        var unsub = query.onSnapshot(snap => {
             etat.ventes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            // Tri côté client si pas d'orderBy
+            if (!avecOrderBy) {
+                etat.ventes.sort(function(a, b) {
+                    var da = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(0);
+                    var db_ = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(0);
+                    return db_ - da;
+                });
+            }
             filtrerHistorique(_filtreActif);
             calculerStats();
-        }, err => console.error('écouteVentes:', err));
-    etat.listeners.push(unsubVentes);
+            afficherHistoriquePanel();
+        }, err => {
+            console.error('écouteVentes [' + err.code + ']:', err.message);
+            if (err.code === 'failed-precondition' && avecOrderBy) {
+                // ✅ Index manquant → retry sans orderBy (tri local)
+                showToast('⚠️ Index Firestore absent — tri local activé', 'info', 4000);
+                _demarrerEcoute(false);
+            } else if (err.code === 'permission-denied') {
+                showToast('🔒 Accès refusé — vérifiez les règles Firestore', 'error', 6000);
+            } else if (err.code === 'unavailable') {
+                showToast('📡 Hors ligne — mode cache activé', 'info', 3000);
+            }
+        });
+        etat.listeners.push(unsub);
+    }
+    _demarrerEcoute(true);
 }
 
 function filtrerHistorique(filtre) {
@@ -1465,770 +1659,204 @@ function filtrerHistorique(filtre) {
     }
     container.innerHTML = ventesFiltrées.map(v => {
         const d = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
+        const isDette = v.statut_paiement === 'dette';
         return `
-        <div class="bg-slate-800 p-2 rounded-xl text-xs">
+        <div class="bg-slate-800 p-2 rounded-xl text-xs border ${isDette ? 'border-red-800' : 'border-slate-700'}">
             <div class="flex justify-between items-center">
-                <span class="text-white font-bold">${v.numero || '—'}</span>
-                <span class="text-green-400 font-black">${formatMontant(v.total)} F</span>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-white font-bold">${v.numero || '—'}</span>
+                    <span class="${isDette ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'} text-[8px] font-bold px-1 py-0.5 rounded-full">${isDette ? '📒' : '✅'}</span>
+                </div>
+                <span class="${isDette ? 'text-red-400' : 'text-green-400'} font-black">${formatMontant(v.total)} F</span>
             </div>
             <div class="flex justify-between items-center text-slate-400 text-[10px] mt-0.5">
-                <span>👤 ${v.caissier_nom || '—'}</span>
+                <span>${v.client_nom ? '👥 ' + v.client_nom : '👤 ' + (v.caissier_nom || '—')}</span>
                 <span>${d.toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
-            <button onclick="imprimerVente('${v.id}')"
-                    class="mt-1.5 w-full bg-slate-700 hover:bg-amber-700 active:scale-95 text-slate-300 hover:text-white text-[10px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all">
-                🖨️ Imprimer ticket
-            </button>
+            <div class="flex gap-1.5 mt-1.5">
+                <button onclick="imprimerVente('${v.id}')"
+                        class="flex-1 bg-slate-700 hover:bg-amber-700 active:scale-95 text-slate-300 hover:text-white text-[10px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all">
+                    🖨️ Ticket
+                </button>
+                ${isDette ? `<button onclick="rappelDetteWhatsApp('${v.id}')"
+                        class="flex-1 bg-[#25D366] hover:bg-[#128C7E] text-white text-[10px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all">
+                    📱 Rappel WA
+                </button>` : ''}
+            </div>
         </div>`;
     }).join('');
 }
 
 function calculerStats() {
-    const now  = new Date();
-    let jour = 0, mois = 0, an = 0;
+    const now = new Date();
+    // Début de semaine (lundi)
+    const lundiSemaine = new Date(now);
+    lundiSemaine.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    lundiSemaine.setHours(0, 0, 0, 0);
+
+    let jour = 0, semaine = 0, mois = 0, dettesTotal = 0, nbDettes = 0;
+
     etat.ventes.forEach(v => {
         const d = v.createdAt?.toDate ? v.createdAt.toDate() : null;
         if (!d) return;
-        if (d.toDateString() === now.toDateString())                                          jour += v.total || 0;
-        if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear())         mois += v.total || 0;
-        if (d.getFullYear() === now.getFullYear())                                             an   += v.total || 0;
+        const montant = v.total || 0;
+        // Seulement les ventes réglées dans les CA
+        if (v.statut_paiement !== 'dette') {
+            if (d.toDateString() === now.toDateString()) jour += montant;
+            if (d >= lundiSemaine)                      semaine += montant;
+            if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) mois += montant;
+        }
+        // Dettes = factures avec reste > 0
+        if (v.statut_paiement === 'dette') {
+            const reste = montant - (v.acompte || 0);
+            if (reste > 0) { dettesTotal += reste; nbDettes++; }
+        }
     });
+
     const s = id => document.getElementById(id);
-    if (s('valJour')) s('valJour').textContent = `${formatMontant(jour)} F`;
-    if (s('valMois')) s('valMois').textContent = `${formatMontant(mois)} F`;
-    if (s('valAn'))   s('valAn').textContent   = `${formatMontant(an)} F`;
+    if (s('valJour'))    s('valJour').textContent    = `${formatMontant(jour)} F`;
+    if (s('valSemaine')) s('valSemaine').textContent = `${formatMontant(semaine)} F`;
+    if (s('valMois'))    s('valMois').textContent    = `${formatMontant(mois)} F`;
+    if (s('valDettes'))  s('valDettes').textContent  = `${formatMontant(dettesTotal)} F`;
+    if (s('nbDettes'))   s('nbDettes').textContent   = `${nbDettes} facture(s)`;
+
+    // Badge header
+    const badge = s('dettesBadge');
+    if (badge) {
+        if (nbDettes > 0) { badge.textContent = nbDettes; badge.classList.remove('hidden'); }
+        else badge.classList.add('hidden');
+    }
 }
 
 // ════════════════════════════════════════════════════════
-//  EXPORT CSV
+//  MODAL PAIEMENT
 // ════════════════════════════════════════════════════════
-function exporterCSV() {
-    if (!etat.ventes.length) { alert('Aucune vente à exporter.'); return; }
-    const entetes = ['Numéro', 'Caissier', 'Total (F)', 'Date'];
-    const lignes  = etat.ventes.map(v => {
-        const d = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
-        return [v.numero, v.caissier_nom, v.total, d.toLocaleString('fr-FR')].join(';');
+var _modePaiementCourant = 'cash';
+var _statutPaiementCourant = 'regle';
+
+function ouvrirModalPaiement(statut) {
+    const lignes = getLignesFacture();
+    if (!lignes.length) { alert('Aucun article saisi.'); return; }
+    const total = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g, '').replace(',', '.')) || 0;
+    if (total <= 0) { alert('Montant invalide.'); return; }
+
+    _statutPaiementCourant = statut;
+    _modePaiementCourant   = 'cash';
+
+    // UI
+    const titre = document.getElementById('modalPaiementTitre');
+    const btnConf = document.getElementById('btnConfirmerPaiement');
+    titre.textContent = statut === 'dette' ? '📒 Enregistrer la dette' : '✅ Valider le règlement';
+    btnConf.className = statut === 'dette'
+        ? 'bg-red-600 hover:bg-red-500 text-white py-3 rounded-xl font-black text-sm transition-colors'
+        : 'bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-black text-sm transition-colors';
+    btnConf.textContent = statut === 'dette' ? '📒 Enregistrer dette' : '✅ Confirmer';
+
+    document.getElementById('modalPaiementTotal').textContent = formatMontant(total) + ' F';
+    document.getElementById('acompteSection').classList.toggle('hidden', statut !== 'dette');
+    document.getElementById('acompteInput').value = '';
+    document.getElementById('resteAPayer').textContent = formatMontant(total) + ' F';
+    document.getElementById('noteDetteInput').value = '';
+
+    // Reset mode buttons
+    document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.remove('border-amber-400', 'bg-slate-500');
+        b.classList.add('bg-slate-700', 'border-transparent');
     });
-    const csv  = [entetes.join(';'), ...lignes].join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `ventes_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    var cashBtn = document.querySelector('.mode-btn[data-mode="cash"]');
+    if (cashBtn) { cashBtn.classList.add('border-amber-400', 'bg-slate-500'); cashBtn.classList.remove('border-transparent'); }
+
+    document.getElementById('modalPaiement').classList.remove('hidden');
 }
 
-// ════════════════════════════════════════════════════════
-//  PANEL PROPRIÉTAIRE
-// ════════════════════════════════════════════════════════
-function ouvrirPanelProprietaire() {
-    document.getElementById('ownerPanel').classList.remove('hidden');
-    chargerListeCaissiers();
+function fermerModalPaiement() {
+    document.getElementById('modalPaiement').classList.add('hidden');
 }
 
-// ════════════════════════════════════════════════════════
-//  ADMIN DÉVELOPPEUR — FONCTIONS COMPLÈTES
-// ════════════════════════════════════════════════════════
-let _devEtablissements = [];
-let _devFiltreActuel   = 'tous';
-let _devEtabSelectionne = null;
-
-function afficherPanelDev() { ouvrirPanelDev(); } // rétro-compat
-
-async function ouvrirPanelDev() {
-    document.getElementById('devPanel').classList.remove('hidden');
-    await chargerTousEtablissements();
-}
-
-function fermerPanelDev() {
-    document.getElementById('devPanel').classList.add('hidden');
-}
-
-async function chargerTousEtablissements() {
-    document.getElementById('devListeEtablissements').innerHTML =
-        '<p class="text-slate-500 text-xs text-center py-8 animate-pulse">Chargement...</p>';
-    try {
-        // { source: 'server' } force la lecture depuis Firestore (ignore le cache local)
-        const [snapEtabs, snapAbos] = await Promise.all([
-            db.collection('etablissements').get({ source: 'server' }),
-            db.collection('abonnements').get({ source: 'server' })
-        ]);
-        const abosMap = {};
-        snapAbos.forEach(doc => { abosMap[doc.id] = doc.data(); });
-
-        _devEtablissements = snapEtabs.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-            abonnement: abosMap[doc.id] || null
-        }));
-
-        _calculerStatsAdmin();
-        afficherListeAdmin();
-    } catch (err) {
-        console.error('chargerTousEtablissements — code:', err.code, '| msg:', err.message);
-        const msg = err.code === 'permission-denied'
-            ? '🔒 Accès refusé — mettez à jour les règles Firestore (allow read: if true)'
-            : err.code === 'unavailable'
-            ? '📡 Hors ligne ou Firebase indisponible. Vérifiez votre réseau.'
-            : `❌ Erreur : ${err.code || err.message}`;
-        document.getElementById('devListeEtablissements').innerHTML =
-            `<p class="text-red-400 text-xs text-center py-4">${msg}</p>`;
-    }
-}
-
-function _calculerStatsAdmin() {
-    const now = new Date();
-    let actifs = 0, expires = 0, suspendus = 0;
-    _devEtablissements.forEach(e => {
-        const abo = e.abonnement;
-        if (!abo) return;
-        if (abo.suspendu) { suspendus++; return; }
-        const exp = abo.expiry?.toDate ? abo.expiry.toDate() : new Date(abo.expiry || 0);
-        exp < now ? expires++ : actifs++;
+function _selectModePaiement(btn, mode) {
+    _modePaiementCourant = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.remove('border-amber-400', 'bg-slate-500');
+        b.classList.add('bg-slate-700', 'border-transparent');
     });
-    const s = id => document.getElementById(id);
-    if (s('devStatTotal'))    s('devStatTotal').textContent    = _devEtablissements.length;
-    if (s('devStatActifs'))   s('devStatActifs').textContent   = actifs;
-    if (s('devStatExpires'))  s('devStatExpires').textContent  = expires;
-    if (s('devStatSuspendus'))s('devStatSuspendus').textContent= suspendus;
+    btn.classList.add('border-amber-400', 'bg-slate-500');
+    btn.classList.remove('border-transparent');
 }
 
-function filtrerEtablissements(filtre) {
-    _devFiltreActuel = filtre;
-    // ✅ OPTIMISÉ : classList.replace → add/remove
-    document.querySelectorAll('.dev-filtre-btn').forEach(btn => {
-        btn.classList.remove('bg-amber-700'); btn.classList.add('bg-slate-700');
-    });
-    const map = { tous:'devFiltreTous', actif:'devFiltreActif', expire:'devFiltreExpire', suspendu:'devFiltreSuspendu', essai:'devFiltreEssai' };
-    const el = document.getElementById(map[filtre]);
-    if (el) { el.classList.remove('bg-slate-700'); el.classList.add('bg-amber-700'); }
-    afficherListeAdmin();
+function majResteAPayer() {
+    const total   = parseFloat(document.getElementById('modalPaiementTotal').textContent.replace(/\s/g, '').replace(',', '.').replace(' F','')) || 0;
+    const acompte = parseFloat(document.getElementById('acompteInput').value) || 0;
+    const reste   = Math.max(0, total - acompte);
+    document.getElementById('resteAPayer').textContent = formatMontant(reste) + ' F';
 }
 
-function afficherListeAdmin() {
-    const now  = new Date();
-    const liste = document.getElementById('devListeEtablissements');
+async function confirmerPaiement() {
+    if (!_tryLock('validerVente')) return;
+    fermerModalPaiement();
 
-    const filtered = _devEtablissements.filter(e => {
-        const abo = e.abonnement;
-        if (!abo) return _devFiltreActuel === 'tous';
-        const exp = abo.expiry?.toDate ? abo.expiry.toDate() : new Date(abo.expiry || 0);
-        const jr  = Math.ceil((exp - now) / 86400000);
-        if (_devFiltreActuel === 'tous')     return true;
-        if (_devFiltreActuel === 'suspendu') return abo.suspendu === true;
-        if (_devFiltreActuel === 'expire')   return jr <= 0 && !abo.suspendu;
-        if (_devFiltreActuel === 'actif')    return jr > 0  && !abo.suspendu;
-        if (_devFiltreActuel === 'essai')    return abo.plan === 'essai';
-        return true;
-    });
+    const lignes = getLignesFacture();
+    const total  = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g, '').replace(',', '.')) || 0;
+    const acompte = parseFloat(document.getElementById('acompteInput').value) || 0;
+    const note    = document.getElementById('noteDetteInput').value.trim();
 
-    if (!filtered.length) {
-        liste.innerHTML = '<p class="text-slate-500 text-xs text-center py-6">Aucun établissement trouvé</p>';
-        return;
-    }
-
-    liste.innerHTML = filtered.map(e => {
-        const abo     = e.abonnement;
-        const exp     = abo?.expiry?.toDate ? abo.expiry.toDate() : new Date(abo?.expiry || 0);
-        const jr      = abo ? Math.ceil((exp - now) / 86400000) : null;
-        const suspendu = abo?.suspendu === true;
-        const expire  = jr !== null && jr <= 0;
-        const urgence = jr !== null && jr > 0 && jr <= 7;
-
-        let statut, statutClass;
-        if (!abo)       { statut = '❓ Sans abonnement'; statutClass = 'text-slate-400'; }
-        else if (suspendu) { statut = '⏸ Suspendu';       statutClass = 'text-yellow-400'; }
-        else if (expire)   { statut = '🚫 Expiré';         statutClass = 'text-red-400'; }
-        else if (urgence)  { statut = `⚠️ ${jr}j restants`; statutClass = 'text-orange-400'; }
-        else               { statut = `✅ ${jr}j restants`; statutClass = 'text-green-400'; }
-
-        const tel = (e.telephone || '').replace(/\D/g, '');
-        const borderClass = (urgence || expire) ? 'border-orange-800' : 'border-slate-800';
-
-        return `
-        <div class="bg-slate-900 p-3 rounded-xl border ${borderClass}">
-            <div class="flex justify-between items-start mb-2">
-                <div class="flex-1 min-w-0">
-                    <p class="text-white font-black text-sm truncate">${e.nom || e.id}</p>
-                    <p class="text-slate-400 text-[10px]">${e.activite || '—'} · ${e.telephone || '—'}</p>
-                    <p class="text-slate-600 text-[9px] font-mono">${e.id}</p>
-                </div>
-                <div class="text-right ml-2 shrink-0">
-                    <p class="${statutClass} font-bold text-xs">${statut}</p>
-                    ${abo ? `<p class="text-slate-500 text-[9px] capitalize">${abo.plan || '—'}</p>` : ''}
-                    ${abo && jr > 0 ? `<p class="text-slate-500 text-[9px]">exp. ${exp.toLocaleDateString('fr-FR')}</p>` : ''}
-                </div>
-            </div>
-            <div class="flex gap-1.5 flex-wrap mt-1">
-                <button onclick="ouvrirModalActivation('${e.id}', '${(e.nom||e.id).replace(/'/g,'\\\'')}')"
-                        class="bg-green-800 hover:bg-green-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
-                    🔄 Activer
-                </button>
-                ${suspendu
-                    ? `<button onclick="devToggleSuspension('${e.id}', false)"
-                              class="bg-blue-800 hover:bg-blue-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
-                          ▶ Réactiver
-                       </button>`
-                    : `<button onclick="devToggleSuspension('${e.id}', true)"
-                              class="bg-yellow-800 hover:bg-yellow-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
-                          ⏸ Suspendre
-                       </button>`
-                }
-                <button onclick="devDesactiver('${e.id}')"
-                        class="bg-red-900 hover:bg-red-800 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
-                    🚫 Désactiver
-                </button>
-                ${tel
-                    ? `<button onclick="devEnvoyerRappel('${tel}', '${(e.nom||e.id).replace(/'/g,'\\\'').replace(/"/g,'&quot;')}', ${jr})"
-                              class="bg-[#25D366] hover:bg-[#128C7E] text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
-                          📱 WhatsApp
-                       </button>`
-                    : ''
-                }
-            </div>
-        </div>`;
-    }).join('');
-}
-
-function ouvrirModalActivation(etabId, nom) {
-    _devEtabSelectionne = etabId;
-    document.getElementById('devModalAboNom').textContent = nom;
-    document.getElementById('devModalAbo').classList.remove('hidden');
-}
-
-async function confirmerActivation() {
-    const plan = document.querySelector('input[name="devPlan"]:checked')?.value;
-    if (!plan || !_devEtabSelectionne) return;
-
-    const durees = { essai: 7, mensuel: 30, trimestriel: 90, annuel: 365 };
-    const jours  = durees[plan] || 30;
-    const expiry = new Date(Date.now() + jours * 24 * 60 * 60 * 1000);
+    if (!etat.caissierActif) { _unlock('validerVente'); alert('Aucun caissier connecté.'); return; }
 
     try {
-        await db.collection('abonnements').doc(_devEtabSelectionne).set({
-            plan,
-            statut   : 'actif',
-            suspendu : false,
-            expiry   : firebase.firestore.Timestamp.fromDate(expiry),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
-        document.getElementById('devModalAbo').classList.add('hidden');
-        await chargerTousEtablissements();
-        alert(`✅ Abonnement "${plan}" activé\nExpiration : ${expiry.toLocaleDateString('fr-FR')}`);
-    } catch (err) {
-        console.error('confirmerActivation:', err);
-        alert('Erreur lors de l\'activation. Réessayez.');
-    }
-}
-
-async function devToggleSuspension(etabId, suspendre) {
-    const msg = suspendre ? 'Suspendre cet établissement ?' : 'Réactiver cet établissement ?';
-    if (!confirm(msg)) return;
-    try {
-        await db.collection('abonnements').doc(etabId).update({
-            suspendu : suspendre,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        await chargerTousEtablissements();
-    } catch (err) {
-        console.error('devToggleSuspension:', err);
-        alert('Erreur. Réessayez.');
-    }
-}
-
-async function devDesactiver(etabId) {
-    if (!confirm('⚠️ Désactiver définitivement cet abonnement ?\nL\'établissement perdra l\'accès immédiatement.')) return;
-    try {
-        await db.collection('abonnements').doc(etabId).update({
-            statut   : 'inactif',
-            suspendu : false,
-            expiry   : firebase.firestore.Timestamp.fromDate(new Date()),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        await chargerTousEtablissements();
-    } catch (err) {
-        console.error('devDesactiver:', err);
-        alert('Erreur. Réessayez.');
-    }
-}
-
-function devEnvoyerRappel(tel, nom, joursRestants) {
-    // Normaliser le numéro burkinabè (+226)
-    let numero = tel.replace(/\D/g, '');
-    if (!numero.startsWith('226')) numero = '226' + numero;
-
-    let msg;
-    if (joursRestants !== null && joursRestants <= 0) {
-        msg =
-`Bonjour ${nom} 👋
-
-Votre abonnement *DigitalFacture Pro* a expiré.
-
-Renouvelez maintenant pour retrouver l'accès à votre caisse :
-• Mensuel : *5 000 F* (30 jours)
-• Trimestriel : *13 500 F* (90 jours) ⭐
-• Annuel : *48 000 F* (365 jours)
-
-Répondez *OUI* pour recevoir les instructions de paiement. 🙏`;
-    } else {
-        msg =
-`Bonjour ${nom} 👋
-
-Votre abonnement *DigitalFacture Pro* expire dans *${joursRestants} jour(s)*.
-
-Renouvelez avant expiration pour ne pas interrompre votre activité :
-• Mensuel : *5 000 F*
-• Trimestriel : *13 500 F* ⭐ Populaire
-• Annuel : *48 000 F*
-
-Répondez *OUI* pour payer maintenant. 🙏`;
-    }
-    window.open(`https://wa.me/${numero}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
-}
-
-// ════════════════════════════════════════════════════════
-//  RENOUVELLEMENT
-// ════════════════════════════════════════════════════════
-function ouvrirModalRenouvellement() {
-    const ref = `${ETABLISSEMENT_ID.toUpperCase().slice(0,6)}-${Date.now().toString().slice(-6)}`;
-    document.getElementById('refPaiement').textContent = ref;
-    document.getElementById('modalRenouvellement').classList.remove('hidden');
-}
-
-async function soumettreRenouvellement() {
-    if (!_tryLock('renouvellement')) return; // ✅ Anti-double-submit
-    const plan = document.querySelector('input[name="planRenouvellement"]:checked')?.value;
-    if (!plan) { _unlock('renouvellement'); alert('Choisissez un plan'); return; }
-    try {
-        await db.collection('demandes_renouvellement').add({
-            etablissement_id : ETABLISSEMENT_ID,
-            plan,
-            ref              : document.getElementById('refPaiement').textContent,
-            statut           : 'en_attente',
+        await FB.ventes().add({
+            numero           : document.getElementById('factureNumero').textContent,
+            caissier_id      : etat.caissierActif.id,
+            caissier_nom     : etat.caissierActif.nom,
+            client_nom       : document.getElementById('clientNom')?.value?.trim() || '',
+            client_adresse   : document.getElementById('clientAdresse')?.value?.trim() || '',
+            client_telephone : document.getElementById('clientTel')?.value?.trim() || '',
+            type_facture     : document.getElementById('typeFacture')?.value || 'FACTURE',
+            lignes,
+            total,
+            acompte          : _statutPaiementCourant === 'dette' ? acompte : total,
+            reste_du         : _statutPaiementCourant === 'dette' ? Math.max(0, total - acompte) : 0,
+            statut_paiement  : _statutPaiementCourant,
+            mode_paiement    : _modePaiementCourant,
+            note_dette       : note,
+            date_jour        : window._currentDateJour || new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+            sequence         : window._currentSequence || 1,
             createdAt        : firebase.firestore.FieldValue.serverTimestamp()
         });
-        document.getElementById('modalRenouvellement').classList.add('hidden');
-        alert('✅ Demande envoyée ! Validation sous 24h après réception du paiement.');
+
+        if (_statutPaiementCourant === 'dette') {
+            showToast('📒 Dette enregistrée — ' + formatMontant(total) + ' F', 'error', 4000);
+        } else {
+            showToast('✅ Vente réglée — ' + formatMontant(total) + ' F', 'success');
+        }
+        reinitialiserFacture();
     } catch (err) {
-        console.error('soumettreRenouvellement:', err);
-        alert('Erreur lors de l\'envoi. Réessayez.');
+        console.error('confirmerPaiement:', err);
+        alert('Erreur enregistrement. Réessayez.');
     } finally {
-        _unlock('renouvellement');
+        _unlock('validerVente');
     }
 }
 
-// ════════════════════════════════════════════════════════
-//  BLOCAGE ACCÈS
-// ════════════════════════════════════════════════════════
-function bloquerAcces(code, titre, message) {
-    masquerLoading();
-    document.getElementById('licenceBlockIcon').textContent  = code === 'expired' ? '⏰' : code === 'suspended' ? '⏸' : '🚫';
-    document.getElementById('licenceBlockTitre').textContent = titre;
-    document.getElementById('licenceBlockMessage').textContent = message;
-    document.getElementById('licenceBlockModal').classList.remove('hidden');
-}
-
-function masquerLoading() {
-    const ls = document.getElementById('loadingScreen');
-    if (ls) ls.classList.add('hidden');
-}
-
-function setLoadingMessage(msg) {
-    document.getElementById('loadingMessage').textContent = msg;
-}
+// Compat ancien bouton VALIDER → ouvre le modal réglé
+function validerVente() { return ouvrirModalPaiement('regle'); }
 
 // ════════════════════════════════════════════════════════
-//  UTILITAIRES — NOMBRE EN LETTRES (simplifié)
+//  PANEL HISTORIQUE CAISSE
 // ════════════════════════════════════════════════════════
-function nombreEnLettres(n) {
-    n = Math.round(n);
-    if (n === 0) return 'zéro';
-    const u = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
-               'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
-    const d = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
-    function conv(nb) {
-        if (nb < 20)  return u[nb];
-        if (nb < 100) {
-            const diz = Math.floor(nb / 10), uni = nb % 10;
-            if (diz === 7 || diz === 9) return d[diz] + (uni === 1 && diz === 7 ? '-et-' : '-') + u[10 + uni];
-            return d[diz] + (uni === 1 && diz < 8 ? '-et-' : uni ? '-' : '') + (uni ? u[uni] : '');
-        }
-        const c = Math.floor(nb / 100);
-        // ✅ OPTIMISÉ : "cent" seul (100) ne prend pas de 's' — seulement les multiples sans suite
-        return (c > 1 ? u[c] + '-cent' : 'cent') + (nb % 100 ? '-' + conv(nb % 100) : (c > 1 ? 's' : ''));
+var _hpPeriode = 'jour';
+var _hpStatut  = 'tout';
+var _hpVenteSelectionnee = null;
+
+function ouvrirHistoriquePanel(filtreStatut) {
+    if (filtreStatut) {
+        _hpStatut = filtreStatut;
     }
-    let res = '';
-    if (n >= 1000000) { res += conv(Math.floor(n / 1000000)) + '-million' + (Math.floor(n / 1000000) > 1 ? 's' : '') + (n % 1000000 ? '-' : ''); n %= 1000000; }
-    if (n >= 1000)    { res += (Math.floor(n / 1000) > 1 ? conv(Math.floor(n / 1000)) + '-' : '') + 'mille' + (n % 1000 ? '-' : ''); n %= 1000; }
-    if (n > 0) res += conv(n);
-    return res;
+    document.getElementById('historiquePanel').classList.remove('hidden');
+    afficherHistoriquePanel();
 }
-</script>
 
-<!-- ══════════════════════════════════════════════════════
-     MODAL IMPRESSION BLE THERMIQUE
-═══════════════════════════════════════════════════════ -->
-<div id="bleModal" class="hidden fixed inset-0 bg-black/90 z-[300] flex items-end justify-center p-4">
-    <div class="bg-slate-900 rounded-2xl p-5 w-full max-w-sm border border-slate-700 shadow-2xl mb-4">
-
-        <!-- Header -->
-        <div class="flex justify-between items-center mb-4">
-            <div>
-                <h3 class="text-white font-black text-base">🖨️ Impression thermique</h3>
-                <p id="bleStatutTexte" class="text-slate-400 text-xs mt-0.5">Non connecté</p>
-            </div>
-            <button onclick="fermerModalBLE()"
-                    class="text-slate-500 hover:text-white text-xl font-black transition-colors">✕</button>
-        </div>
-
-        <!-- Indicateur statut -->
-        <div id="bleStatutBarre" class="flex items-center gap-2 bg-slate-800 p-2.5 rounded-xl mb-4">
-            <div id="blePoint" class="w-3 h-3 rounded-full bg-slate-600 shrink-0"></div>
-            <p id="bleNomAppareil" class="text-slate-400 text-xs font-bold truncate">Aucune imprimante mémorisée</p>
-            <button id="bleOublierBtn" onclick="oublierImprimante()"
-                    class="hidden ml-auto text-red-400 hover:text-red-300 text-[10px] font-bold shrink-0 transition-colors">
-                ✕ Oublier
-            </button>
-        </div>
-
-        <!-- Boutons -->
-        <div class="space-y-2">
-            <button id="bleBtnConnecter" onclick="connecterImprimante()"
-                    class="w-full bg-amber-600 hover:bg-amber-500 active:scale-95 text-white py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2">
-                <span>🔍</span><span>Rechercher imprimante BLE</span>
-            </button>
-            <button id="bleBtnImprimer" onclick="confirmerImpression()" disabled
-                    class="w-full bg-slate-700 text-slate-500 py-3 rounded-xl font-black text-sm cursor-not-allowed flex items-center justify-center gap-2">
-                <span>🖨️</span><span>Imprimer le ticket</span>
-            </button>
-            <button onclick="impressionFallback()"
-                    class="w-full bg-slate-800 hover:bg-slate-700 text-slate-400 py-2.5 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-2">
-                <span>📄</span><span>Imprimer via le système (iOS / fallback)</span>
-            </button>
-        </div>
-
-        <!-- Copies -->
-        <div class="flex items-center justify-between mt-3 px-1">
-            <span class="text-slate-400 text-xs">Nombre de copies :</span>
-            <div class="flex items-center gap-2">
-                <button onclick="bleChangerCopies(-1)"
-                        class="w-7 h-7 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-black text-sm transition-colors">−</button>
-                <span id="bleCopies" class="text-white font-black text-sm w-4 text-center">1</span>
-                <button onclick="bleChangerCopies(1)"
-                        class="w-7 h-7 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-black text-sm transition-colors">+</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════
-     MODULE BLE THERMIQUE — ESC/POS
-═══════════════════════════════════════════════════════ -->
-<script>
-// ── Profils UUID des imprimantes thermiques BLE génériques
-const BLE_PROFILES = [
-    { service: '000018f0-0000-1000-8000-00805f9b34fb', char: '00002af1-0000-1000-8000-00805f9b34fb' },
-    { service: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', char: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f' },
-    { service: '49535343-fe7d-4ae5-8fa9-9fafd205e455', char: '49535343-8841-43f4-a818-c20a01cfb9e0' },
-    { service: '0000ff00-0000-1000-8000-00805f9b34fb', char: '0000ff02-0000-1000-8000-00805f9b34fb' },
-];
-
-// ── État global imprimante
-let _bleDevice    = null;
-let _bleChar      = null;
-let _bleCopies    = 1;
-let _bleVenteData = null; // vente à imprimer
-
-const PW = 48; // largeur ticket 80mm = 48 chars police normale
-
-// ── Commandes ESC/POS
-const ESC = 0x1B, GS = 0x1D;
-const CMD = {
-    INIT         : [ESC, 0x40],
-    ALIGN_LEFT   : [ESC, 0x61, 0x00],
-    ALIGN_CENTER : [ESC, 0x61, 0x01],
-    ALIGN_RIGHT  : [ESC, 0x61, 0x02],
-    BOLD_ON      : [ESC, 0x45, 0x01],
-    BOLD_OFF     : [ESC, 0x45, 0x00],
-    DOUBLE_SIZE  : [ESC, 0x21, 0x30],
-    NORMAL_SIZE  : [ESC, 0x21, 0x00],
-    LF           : [0x0A],
-    CUT          : [GS, 0x56, 0x41, 0x03],
-};
-
-// ── Helpers texte
-function _norm(str) {
-    return String(str || '')
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^\x20-\x7E]/g, '?');
-}
-function _pad(str, width, align = 'left') {
-    const s = _norm(str).substring(0, width);
-    if (align === 'right')  return s.padStart(width);
-    if (align === 'center') {
-        const p = Math.max(0, width - s.length);
-        return ' '.repeat(Math.floor(p/2)) + s + ' '.repeat(Math.ceil(p/2));
-    }
-    return s.padEnd(width);
-}
-function _toBytes(str) {
-    const a = [];
-    for (let i = 0; i < str.length; i++) a.push(str.charCodeAt(i) & 0xFF);
-    return a;
-}
-function _line(str) { return _toBytes(_norm(str) + '\n'); }
-function _cmd(...c)  { return [].concat(...c); }
-
-// ── Générateur ticket ESC/POS
-function genererTicketESCPOS(vente, etab) {
-    const S1 = '='.repeat(PW), S2 = '-'.repeat(PW);
-    const b  = [];
-    const add = (...parts) => { for (const p of parts) b.push(...p); };
-
-    // Init
-    add(CMD.INIT, CMD.ALIGN_CENTER);
-
-    // LOGO TEXTE — nom établissement en grand
-    add(CMD.BOLD_ON, CMD.DOUBLE_SIZE);
-    add(_line(etab.nom || 'MON COMMERCE'));
-    add(CMD.NORMAL_SIZE, CMD.BOLD_OFF);
-    if (etab.activite)  add(_line(etab.activite));
-    const contact = [etab.ville, etab.telephone].filter(Boolean).join('  ');
-    if (contact)        add(_line(contact));
-
-    add(CMD.ALIGN_LEFT, CMD.BOLD_ON);
-    add(_line(S1));
-    add(CMD.BOLD_OFF);
-
-    // INFO FACTURE
-    const d        = vente.createdAt?.toDate ? vente.createdAt.toDate() : new Date();
-    const dateStr  = d.toLocaleDateString('fr-FR');
-    const heureStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    add(_line(_pad('Date: ' + dateStr, 26) + _pad(heureStr, PW - 26, 'right')));
-    add(CMD.BOLD_ON);
-    add(_line((vente.type_facture || 'FACTURE') + ' N: ' + _norm(vente.numero || '')));
-    add(CMD.BOLD_OFF);
-    if (vente.client_nom) add(_line('Client : ' + vente.client_nom));
-    add(_line('Caissier: ' + _norm(vente.caissier_nom || '')));
-    add(_line(S2));
-
-    // COLONNES
-    add(CMD.BOLD_ON);
-    add(_line(_pad('ARTICLE', 26) + _pad('QTE', 6, 'right') + _pad('MONTANT', 16, 'right')));
-    add(CMD.BOLD_OFF);
-    add(_line(S2));
-
-    // LIGNES ARTICLES
-    (vente.lignes || []).forEach(l => {
-        const art  = _pad(String(l.article || ''), 26);
-        const qte  = _pad(String(l.qte || 1), 6, 'right');
-        const mont = _pad(formatMontant(l.total || 0), 16, 'right');
-        add(_line(art + qte + mont));
+function filtrerHistoriquePeriode(p) {
+    _hpPeriode = p;
+    document.querySelectorAll('.hp-filtre').forEach(b => {
+        b.classList.remove('bg-amber-700'); b.classList.add('bg-slate-700');
     });
-
-    add(_line(S2));
-
-    // TOTAL
-    add(CMD.BOLD_ON, CMD.DOUBLE_SIZE, CMD.ALIGN_RIGHT);
-    add(_line('TOTAL: ' + formatMontant(vente.total || 0) + ' F'));
-    add(CMD.NORMAL_SIZE, CMD.BOLD_OFF, CMD.ALIGN_LEFT);
-    add(_line(S1));
-
-    // FOOTER
-    add(CMD.ALIGN_CENTER);
-    add(_line('Merci de votre confiance !'));
-    add(_line('Powered by FactuBF'));
-    add(CMD.ALIGN_LEFT);
-
-    // Feed + Coupe
-    add(CMD.LF, CMD.LF, CMD.LF, CMD.LF, CMD.CUT);
-
-    return b;
-}
-
-// ── Envoi BLE par chunks de 200 octets
-async function _bleWrite(data) {
-    if (!_bleChar) throw new Error('Non connecte');
-    const CHUNK = 200;
-    for (let i = 0; i < data.length; i += CHUNK) {
-        await _bleChar.writeValue(new Uint8Array(data.slice(i, i + CHUNK)));
-        await new Promise(r => setTimeout(r, 60));
-    }
-}
-
-// ── Connexion imprimante BLE
-async function connecterImprimante() {
-    if (!navigator.bluetooth) {
-        alert('Web Bluetooth non disponible.\nUtilisez Chrome sur Android (HTTPS requis apres deploiement).');
-        return false;
-    }
-    _mettreAJourStatutBLE('Recherche...', 'searching');
-    try {
-        const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: BLE_PROFILES.map(p => p.service)
-        });
-        device.addEventListener('gattserverdisconnected', () => {
-            _bleDevice = null; _bleChar = null;
-            _mettreAJourStatutBLE('Deconnecte', 'disconnected');
-        });
-        _mettreAJourStatutBLE('Connexion...', 'connecting');
-        const server = await device.gatt.connect();
-
-        let ok = false;
-        for (const profile of BLE_PROFILES) {
-            try {
-                const svc  = await server.getPrimaryService(profile.service);
-                const chr  = await svc.getCharacteristic(profile.char);
-                _bleDevice = device;
-                _bleChar   = chr;
-                ok = true;
-                break;
-            } catch (_) { continue; }
-        }
-        if (!ok) throw new Error('Imprimante non reconnue. Essayez de rapprocher l\'appareil.');
-
-        const nom = device.name || 'Imprimante BLE';
-        localStorage.setItem('dfp_printer_name', nom);
-        _mettreAJourStatutBLE('Connecte : ' + nom, 'connected');
-        return true;
-    } catch (err) {
-        if (err.name !== 'NotFoundError') {
-            alert('Echec : ' + err.message);
-        }
-        _mettreAJourStatutBLE('Non connecte', 'disconnected');
-        return false;
-    }
-}
-
-// ── Statut visuel
-function _mettreAJourStatutBLE(texte, etat) {
-    const point   = document.getElementById('blePoint');
-    const statut  = document.getElementById('bleStatutTexte');
-    const nom     = document.getElementById('bleNomAppareil');
-    const btn     = document.getElementById('bleBtnImprimer');
-    const oublier = document.getElementById('bleOublierBtn');
-    const couleurs = { connected: 'bg-green-500', connecting: 'bg-yellow-500 animate-pulse',
-                       searching: 'bg-blue-500 animate-pulse', disconnected: 'bg-slate-600' };
-    if (point)   { point.className = 'w-3 h-3 rounded-full shrink-0 ' + (couleurs[etat] || couleurs.disconnected); }
-    if (statut)  statut.textContent = texte;
-    const saved = localStorage.getItem('dfp_printer_name');
-    if (nom)     nom.textContent = _bleChar ? (_bleDevice?.name || 'Imprimante BLE') : (saved || 'Aucune imprimante memorisee');
-    if (btn) {
-        const pret = !!_bleChar;
-        btn.disabled = !pret;
-        btn.className = pret
-            ? 'w-full bg-green-600 hover:bg-green-500 active:scale-95 text-white py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2'
-            : 'w-full bg-slate-700 text-slate-500 py-3 rounded-xl font-black text-sm cursor-not-allowed flex items-center justify-center gap-2';
-    }
-    if (oublier) oublier.classList.toggle('hidden', !saved);
-}
-
-// ── Copie nombre
-function bleChangerCopies(delta) {
-    _bleCopies = Math.max(1, Math.min(5, _bleCopies + delta));
-    const el = document.getElementById('bleCopies');
-    if (el) el.textContent = _bleCopies;
-}
-
-// ── Ouvrir modal impression (depuis facture ou historique)
-function ouvrirModalImpression(vente) {
-    _bleVenteData = vente;
-    _bleCopies    = 1;
-    const el = document.getElementById('bleCopies');
-    if (el) el.textContent = '1';
-    _mettreAJourStatutBLE(_bleChar ? 'Connecte : ' + (_bleDevice?.name || 'BLE') : 'Non connecte',
-                          _bleChar ? 'connected' : 'disconnected');
-    document.getElementById('bleModal').classList.remove('hidden');
-}
-
-function fermerModalBLE() {
-    document.getElementById('bleModal').classList.add('hidden');
-    _bleVenteData = null;
-}
-
-function oublierImprimante() {
-    localStorage.removeItem('dfp_printer_name');
-    _bleDevice = null; _bleChar = null;
-    _mettreAJourStatutBLE('Non connecte', 'disconnected');
-}
-
-// ── Impression finale (bouton Imprimer du modal)
-async function confirmerImpression() {
-    if (!_bleVenteData) return;
-    if (!_bleChar) { alert('Connectez d\'abord une imprimante.'); return; }
-
-    const etab   = etat?.etablissement || {};
-    const ticket = genererTicketESCPOS(_bleVenteData, etab);
-
-    const btn = document.getElementById('bleBtnImprimer');
-    if (btn) { btn.disabled = true; btn.querySelector('span:last-child').textContent = 'Impression...'; }
-
-    try {
-        for (let i = 0; i < _bleCopies; i++) {
-            await _bleWrite(ticket);
-            if (i < _bleCopies - 1) await new Promise(r => setTimeout(r, 500));
-        }
-        fermerModalBLE();
-    } catch (err) {
-        console.error('Impression BLE:', err);
-        alert('Erreur impression : ' + err.message + '\nReconnectez l\'imprimante.');
-        _bleDevice = null; _bleChar = null;
-        _mettreAJourStatutBLE('Deconnecte', 'disconnected');
-    } finally {
-        if (btn) { btn.disabled = false; btn.querySelector('span:last-child').textContent = 'Imprimer le ticket'; }
-    }
-}
-
-// ── Fallback CSS print (iOS / navigateurs sans Web Bluetooth)
-function impressionFallback() {
-    fermerModalBLE();
-    window.print();
-}
-
-// ── Imprimer la facture en cours (depuis la caisse)
-function imprimerFactureActuelle() {
-    const lignes = [];
-    document.querySelectorAll('#lignes-facture tr').forEach(tr => {
-        const art = tr.querySelector('input[type="text"]')?.value?.trim();
-        const qte = parseFloat(tr.querySelector('.qte')?.value) || 0;
-        const pu  = parseFloat(tr.querySelector('.pu')?.value)  || 0;
-        if (art && qte > 0 && pu > 0) lignes.push({ article: art, qte, pu, total: qte * pu });
-    });
-    if (!lignes.length) { alert('Aucun article a imprimer.'); return; }
-    const total    = parseFloat(document.getElementById('grandTotal')?.textContent?.replace(/\s/g,'').replace(',','.')) || 0;
-    const numero   = document.getElementById('factureNumero')?.textContent || '';
-    const venteObj = {
-        numero,
-        caissier_nom : etat?.caissierActif?.nom || '',
-        client_nom   : document.getElementById('clientNom')?.value?.trim() || '',
-        type_facture : document.getElementById('typeFacture')?.value || 'FACTURE',
-        lignes,
-        total,
-        createdAt    : { toDate: () => new Date() }
-    };
-    ouvrirModalImpression(venteObj);
-}
-
-// ── Imprimer une vente de l'historique
-function imprimerVente(venteId) {
-    const vente = etat?.ventes?.find(v => v.id === venteId);
-    if (!vente) { alert('Vente introuvable.'); return; }
-    ouvrirModalImpression(vente);
-}
-</script>
-
-<!-- Service Worker PWA (optionnel — sw.js requis sur le serveur) -->
-<script>
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-            .then(r => console.log('✅ SW actif:', r.scope))
-            .catch(() => {}); // sw.js absent en dev — silencieux
-    });
-}
-</script>
-</body>
-</html>
+    var el = document.getElementById({ jour:'hpFiltreJour', semaine:'hpFiltreSemaine', mois:'hp
