@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -1099,6 +1100,17 @@ let etat = {
 // ════════════════════════════════════════════════════════
 //  INIT — point d'entrée au chargement
 // ════════════════════════════════════════════════════════
+
+// ✅ FIX BLOCAGE : timeout sur les promesses Firestore
+function _avecTimeout(promesse, ms, label) {
+    return Promise.race([
+        promesse,
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('TIMEOUT:' + label)), ms)
+        )
+    ]);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     initDate();
     await chargerEtablissement();
@@ -1109,7 +1121,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 //  CHARGEMENT ÉTABLISSEMENT + ABONNEMENT
 // ════════════════════════════════════════════════════════
 async function chargerEtablissement() {
-    // ── Si pas d'ID en localStorage → afficher page accueil
     const etabId = localStorage.getItem('dfp_etablissement_id');
     if (!etabId) {
         masquerLoading();
@@ -1118,61 +1129,142 @@ async function chargerEtablissement() {
     }
 
     setLoadingMessage('Connexion Firebase...');
+
+    // ✅ FIX BLOCAGE : timeout 8 secondes sur chaque appel Firestore
+    // Si le réseau est lent, on essaie le cache local plutôt que de bloquer indéfiniment
+    const TIMEOUT_MS = 8000;
+
+    // ✅ Helper : tente server, puis cache, puis erreur propre
+    async function _getAvecFallback(ref, label) {
+        try {
+            return await _avecTimeout(ref.get(), TIMEOUT_MS, label);
+        } catch (e1) {
+            try {
+                setLoadingMessage('Réseau lent — mode hors-ligne...');
+                return await ref.get({ source: 'cache' });
+            } catch (e2) {
+                // Pas de réseau ET pas de cache → erreur unavailable
+                const err = new Error('OFFLINE:' + label);
+                err.code = e1.code || 'unavailable';
+                throw err;
+            }
+        }
+    }
+
     try {
-        // ── Étape 1 : charger l'établissement via .get() (attendu avant de continuer)
         setLoadingMessage('Chargement établissement...');
-        const snapEtab = await FB.etablissement().get();
+        let snapEtab;
+        try {
+            snapEtab = await _getAvecFallback(FB.etablissement(), 'etablissement');
+        } catch (e) {
+            if (e.message?.startsWith('OFFLINE:') || e.code === 'unavailable') {
+                _afficherEcranHorsLigne(); return;
+            } else throw e;
+        }
+
         if (!snapEtab.exists) {
-            bloquerAcces('etablissement_introuvable',
-                '⚠️ Établissement introuvable',
-                `ID "${FB._id()}" non trouvé dans la base. Contactez le support.`);
+            masquerLoading();
+            document.getElementById('licenceBlockIcon').textContent  = '⚠️';
+            document.getElementById('licenceBlockTitre').textContent = 'Établissement introuvable';
+            document.getElementById('licenceBlockMessage').textContent =
+                `L'identifiant "${FB._id()}" est introuvable. Reconnectez-vous.`;
+            document.getElementById('licenceBlockModal').classList.remove('hidden');
+            // ✅ Bouton pour se déconnecter et réessayer
+            const btn = document.getElementById('licenceBlockModal').querySelector('button');
+            if (btn) { btn.textContent = '🔄 Se déconnecter'; btn.onclick = seDeconnecterEtablissement; }
             return;
         }
+
         etat.etablissement = { id: snapEtab.id, ...snapEtab.data() };
+        etat.infosEtab     = etat.etablissement; // ✅ alias pour compatibilité
         appliquerInfosEtablissement(etat.etablissement);
 
-        // ── Activer l'écoute temps-réel pour les mises à jour ultérieures
+        // Écoute live établissement
         const unsubEtab = FB.etablissement().onSnapshot(snap => {
             if (!snap.exists) return;
             etat.etablissement = { id: snap.id, ...snap.data() };
+            etat.infosEtab     = etat.etablissement;
             appliquerInfosEtablissement(etat.etablissement);
-        }, err => console.error('Firestore etab onSnapshot:', err));
+        }, err => console.error('etab onSnapshot:', err));
         etat.listeners.push(unsubEtab);
 
-        // ── Étape 2 : vérification abonnement
+        // ── Vérification abonnement
         setLoadingMessage('Vérification abonnement...');
-        const snapAbo = await FB.abonnement().get();
+        let snapAbo;
+        try {
+            snapAbo = await _getAvecFallback(FB.abonnement(), 'abonnement');
+        } catch (e) {
+            if (e.message?.startsWith('OFFLINE:') || e.code === 'unavailable') {
+                _afficherEcranHorsLigne(); return;
+            } else throw e;
+        }
+
         if (!snapAbo.exists) {
             bloquerAcces('no_subscription', '🔑 Aucun abonnement actif',
-                'Aucun abonnement trouvé pour cet établissement.');
+                'Aucun abonnement trouvé. Contactez le support.');
             return;
         }
+
         etat.abonnement = snapAbo.data();
         const statut = verifierAbonnement(etat.abonnement);
+        if (statut.bloque) { bloquerAcces(statut.code, statut.titre, statut.message); return; }
 
-        if (statut.bloque) {
-            bloquerAcces(statut.code, statut.titre, statut.message);
-            return;
-        }
-
-        // ── Accès autorisé
         afficherInfosAbonnement(etat.abonnement, statut);
         masquerLoading();
         afficherModalConnexion();
-
-        // ── Écoute live des ventes
         ecouterVentes();
 
     } catch (err) {
-        console.error('chargerEtablissement:', err);
-        // Afficher l'erreur ET débloquer le loading pour ne pas rester bloqué
+        console.error('chargerEtablissement:', err.code || err.message);
+        if (err.code === 'unavailable' || err.message?.includes('OFFLINE')) {
+            _afficherEcranHorsLigne(); return;
+        }
         masquerLoading();
-        document.getElementById('licenceBlockIcon').textContent  = '📡';
-        document.getElementById('licenceBlockTitre').textContent = 'Erreur de connexion';
-        document.getElementById('licenceBlockMessage').textContent =
-            `Impossible de joindre Firebase. Vérifiez votre réseau et que l'ID établissement "${FB._id()}" est correct.`;
+        let titre   = '📡 Erreur de connexion';
+        let message = 'Vérifiez votre connexion internet et réessayez.';
+        if (err.code === 'permission-denied') {
+            titre   = '🔒 Accès refusé';
+            message = 'Les règles Firestore bloquent l\'accès. Contactez l\'administrateur.';
+        } else if (err.message?.includes('TIMEOUT')) {
+            titre   = '⏱ Connexion trop lente';
+            message = 'Firebase ne répond pas. Vérifiez votre réseau et rechargez.';
+        }
+        document.getElementById('licenceBlockIcon').textContent   = '📡';
+        document.getElementById('licenceBlockTitre').textContent  = titre;
+        document.getElementById('licenceBlockMessage').textContent = message;
         document.getElementById('licenceBlockModal').classList.remove('hidden');
+        const btn = document.getElementById('licenceBlockModal').querySelector('button');
+        if (btn) { btn.textContent = '🔄 Réessayer'; btn.onclick = () => window.location.reload(); }
     }
+}
+
+// ✅ NOUVEAU : écran hors-ligne propre avec retry automatique
+function _afficherEcranHorsLigne() {
+    masquerLoading();
+    document.getElementById('licenceBlockIcon').textContent  = '📡';
+    document.getElementById('licenceBlockTitre').textContent = 'Pas de connexion';
+    document.getElementById('licenceBlockMessage').textContent =
+        'Impossible de joindre Firebase.\n\nVérifiez que vous avez internet (4G / WiFi) puis réessayez.';
+    document.getElementById('licenceBlockModal').classList.remove('hidden');
+    const btn = document.getElementById('licenceBlockModal').querySelector('button');
+    if (btn) {
+        btn.textContent = '🔄 Réessayer';
+        btn.onclick = () => window.location.reload();
+    }
+    // ✅ Retry automatique toutes les 5 secondes
+    let countdown = 5;
+    const timer = setInterval(() => {
+        countdown--;
+        if (btn) btn.textContent = `🔄 Réessayer (${countdown}s)`;
+        if (countdown <= 0) { clearInterval(timer); window.location.reload(); }
+    }, 1000);
+}
+
+// ✅ Se déconnecter complètement (vider localStorage)
+function seDeconnecterEtablissement() {
+    localStorage.removeItem('dfp_etablissement_id');
+    sessionStorage.removeItem('dfp_mdp');
+    window.location.reload();
 }
 
 // ════════════════════════════════════════════════════════
@@ -1336,13 +1428,18 @@ async function creerCaissier() {
 
 async function chargerListeCaissiers() {
     try {
-        const snap = await FB.caissiers().orderBy('nom').get();
+        // ✅ FIX : orderBy sans index → tri côté client
+        const snap = await FB.caissiers().get();
         const liste = document.getElementById('listeCaissiers');
         if (snap.empty) {
             liste.innerHTML = '<p class="text-slate-500 text-xs text-center">Aucun caissier enregistré</p>';
             return;
         }
-        liste.innerHTML = snap.docs.map(doc => {
+        // ✅ Tri alphabétique côté client
+        const docs = snap.docs.slice().sort((a, b) =>
+            (a.data().nom || '').localeCompare(b.data().nom || '', 'fr')
+        );
+        liste.innerHTML = docs.map(doc => {
             const c = doc.data();
             return `
             <div class="flex justify-between items-center bg-slate-800 p-2 rounded-xl">
@@ -1391,19 +1488,28 @@ async function genererNumerFacture() {
     try {
         const now   = new Date();
         const today = now.toISOString().slice(0, 10).replace(/-/g, '');
-        const annee = String(now.getFullYear()).slice(-2); // ex. "25"
-        const snap  = await FB.ventes()
+        const annee = String(now.getFullYear()).slice(-2);
+
+        // ✅ FIX : where + orderBy ensemble exige un index composite → on supprime orderBy
+        // et on trie les résultats côté client
+        const snap = await FB.ventes()
             .where('date_jour', '==', today)
-            .orderBy('createdAt', 'desc')
-            .limit(1).get();
-        const seq = snap.empty ? 1 : ((snap.docs[0].data().sequence || 0) + 1);
-        // Format : FAC-00001/25
+            .get();
+
+        let maxSeq = 0;
+        snap.docs.forEach(doc => {
+            const seq = doc.data().sequence || 0;
+            if (seq > maxSeq) maxSeq = seq;
+        });
+        const seq = maxSeq + 1;
+
         document.getElementById('factureNumero').textContent =
             `FAC-${String(seq).padStart(5, '0')}/${annee}`;
         window._currentSequence = seq;
         window._currentDateJour = today;
     } catch (err) {
         console.warn('genererNumerFacture:', err);
+        // Fallback : numéro basé sur timestamp
         const annee = String(new Date().getFullYear()).slice(-2);
         document.getElementById('factureNumero').textContent =
             `FAC-${Date.now().toString().slice(-5)}/${annee}`;
@@ -1536,7 +1642,9 @@ function getLignesFacture() {
         const art = tr.querySelector('input[type="text"]')?.value?.trim();
         const qte = parseFloat(tr.querySelector('.qte')?.value) || 0;
         const pu  = parseFloat(tr.querySelector('.pu')?.value)  || 0;
-        if (art && qte > 0 && pu > 0) lignes.push({ article: art, qte, pu, total: qte * pu });
+        // ✅ FIX : on accepte une ligne si elle a un nom ET une quantité > 0
+        // (PU=0 est rejeté seulement si l'article n'a pas de nom)
+        if (art && qte > 0) lignes.push({ article: art, qte, pu, total: qte * pu });
     });
     return lignes;
 }
@@ -1736,9 +1844,14 @@ var _statutPaiementCourant = 'regle';
 
 function ouvrirModalPaiement(statut) {
     const lignes = getLignesFacture();
-    if (!lignes.length) { alert('Aucun article saisi.'); return; }
-    const total = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g, '').replace(',', '.')) || 0;
-    if (total <= 0) { alert('Montant invalide.'); return; }
+    const total  = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g,'').replace(',','.')) || 0;
+
+    // ✅ FIX : vérifier le total affiché ET les lignes
+    // Si le total > 0 mais getLignesFacture vide → utiliser le total affiché directement
+    if (total <= 0) {
+        showToast('⚠️ Saisissez au moins un article avec un montant', 'error');
+        return;
+    }
 
     _statutPaiementCourant = statut;
     _modePaiementCourant   = 'cash';
@@ -1794,10 +1907,24 @@ async function confirmerPaiement() {
     if (!_tryLock('validerVente')) return;
     fermerModalPaiement();
 
-    const lignes = getLignesFacture();
-    const total  = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g, '').replace(',', '.')) || 0;
+    let lignes = getLignesFacture();
+    const total   = parseFloat(document.getElementById('grandTotal').textContent.replace(/\s/g, '').replace(',', '.')) || 0;
     const acompte = parseFloat(document.getElementById('acompteInput').value) || 0;
     const note    = document.getElementById('noteDetteInput').value.trim();
+
+    // ✅ FIX : si getLignesFacture vide mais total > 0 → lire directement le DOM
+    if (!lignes.length && total > 0) {
+        document.querySelectorAll('#lignes-facture tr').forEach(tr => {
+            const art = tr.querySelector('input[type="text"]')?.value?.trim();
+            const qte = parseFloat(tr.querySelector('.qte')?.value) || 1;
+            const pu  = parseFloat(tr.querySelector('.pu')?.value)  || 0;
+            if (art) lignes.push({ article: art, qte, pu, total: qte * pu });
+        });
+    }
+    // Dernier recours : ligne générique
+    if (!lignes.length && total > 0) {
+        lignes = [{ article: 'Vente', qte: 1, pu: total, total }];
+    }
 
     if (!etat.caissierActif) { _unlock('validerVente'); alert('Aucun caissier connecté.'); return; }
 
@@ -1859,4 +1986,945 @@ function filtrerHistoriquePeriode(p) {
     document.querySelectorAll('.hp-filtre').forEach(b => {
         b.classList.remove('bg-amber-700'); b.classList.add('bg-slate-700');
     });
-    var el = document.getElementById({ jour:'hpFiltreJour', semaine:'hpFiltreSemaine', mois:'hp
+    var el = document.getElementById({ jour:'hpFiltreJour', semaine:'hpFiltreSemaine', mois:'hpFiltreMois', tout:'hpFiltreTout' }[p]);
+    if (el) { el.classList.remove('bg-slate-700'); el.classList.add('bg-amber-700'); }
+    afficherHistoriquePanel();
+}
+
+function filtrerHistoriqueStatut(s) {
+    _hpStatut = s;
+    document.querySelectorAll('.hp-statut').forEach(b => {
+        b.classList.remove('bg-amber-700'); b.classList.add('bg-slate-700');
+    });
+    var el = document.getElementById({ tout:'hpStatutTout', regle:'hpStatutRegle', dette:'hpStatutDette' }[s]);
+    if (el) { el.classList.remove('bg-slate-700'); el.classList.add('bg-amber-700'); }
+    afficherHistoriquePanel();
+}
+
+function afficherHistoriquePanel() {
+    const now = new Date();
+    const lundiSemaine = new Date(now);
+    lundiSemaine.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    lundiSemaine.setHours(0, 0, 0, 0);
+    const recherche = (document.getElementById('hpRecherche')?.value || '').toLowerCase().trim();
+
+    let ventes = etat.ventes.filter(v => {
+        const d = v.createdAt?.toDate ? v.createdAt.toDate() : null;
+        // Filtre période
+        if (_hpPeriode !== 'tout') {
+            if (!d) return false;
+            if (_hpPeriode === 'jour' && d.toDateString() !== now.toDateString()) return false;
+            if (_hpPeriode === 'semaine' && d < lundiSemaine) return false;
+            if (_hpPeriode === 'mois' && (d.getMonth() !== now.getMonth() || d.getFullYear() !== now.getFullYear())) return false;
+        }
+        // Filtre statut
+        if (_hpStatut === 'regle' && v.statut_paiement === 'dette') return false;
+        if (_hpStatut === 'dette' && v.statut_paiement !== 'dette') return false;
+        // Recherche texte
+        if (recherche) {
+            const haystack = [v.numero, v.client_nom, v.caissier_nom, String(v.total)].join(' ').toLowerCase();
+            if (!haystack.includes(recherche)) return false;
+        }
+        return true;
+    });
+
+    // Stats résumé
+    let totalRegle = 0, totalDettes = 0;
+    ventes.forEach(v => {
+        if (v.statut_paiement === 'dette') totalDettes += (v.reste_du || v.total || 0);
+        else totalRegle += v.total || 0;
+    });
+    var s = function(id) { return document.getElementById(id); };
+    if (s('hpNbVentes'))    s('hpNbVentes').textContent    = ventes.length;
+    if (s('hpTotalRegle'))  s('hpTotalRegle').textContent  = formatMontant(totalRegle) + ' F';
+    if (s('hpTotalDettes')) s('hpTotalDettes').textContent = formatMontant(totalDettes) + ' F';
+
+    const container = s('hpListeVentes');
+    if (!ventes.length) {
+        container.innerHTML = '<p class="text-slate-500 text-xs text-center py-8">Aucune commande trouvée</p>';
+        return;
+    }
+
+    container.innerHTML = ventes.map(v => {
+        const d    = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
+        const isDette = v.statut_paiement === 'dette';
+        const reste   = v.reste_du || (isDette ? v.total - (v.acompte || 0) : 0);
+        const modeIcon = { cash:'💵', orange:'🔶', moov:'🔵' }[v.mode_paiement] || '💳';
+        return `
+        <div class="bg-slate-900 rounded-xl p-3 border ${isDette ? 'border-red-800' : 'border-slate-800'} cursor-pointer active:scale-[0.98] transition-transform"
+             onclick="ouvrirDetailVente('${v.id}')">
+            <div class="flex justify-between items-start">
+                <div>
+                    <span class="text-white font-black text-xs">${v.numero || '—'}</span>
+                    ${isDette ? '<span class="ml-2 bg-red-900 text-red-300 text-[9px] font-bold px-1.5 py-0.5 rounded-full">📒 DETTE</span>' : '<span class="ml-2 bg-green-900 text-green-300 text-[9px] font-bold px-1.5 py-0.5 rounded-full">✅ RÉGLÉ</span>'}
+                </div>
+                <span class="${isDette ? 'text-red-400' : 'text-green-400'} font-black text-sm">${formatMontant(v.total)} F</span>
+            </div>
+            <div class="flex justify-between items-center text-slate-400 text-[10px] mt-1">
+                <span>${v.client_nom ? '👥 ' + v.client_nom : '👤 ' + (v.caissier_nom || '—')}</span>
+                <span>${modeIcon} ${d.toLocaleString('fr-FR', { hour:'2-digit', minute:'2-digit' })}</span>
+            </div>
+            ${isDette && reste > 0 ? `<div class="mt-1.5 bg-red-950 rounded-lg px-2 py-1 flex justify-between text-[10px]">
+                <span class="text-red-400">Reste dû :</span>
+                <span class="text-red-300 font-black">${formatMontant(reste)} F</span>
+            </div>` : ''}
+            ${isDette ? `<button onclick="event.stopPropagation(); rappelDetteWhatsApp('${v.id}')"
+                class="mt-2 w-full bg-[#25D366] hover:bg-[#128C7E] text-white text-[10px] font-bold py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors">
+                📱 Envoyer rappel WhatsApp
+            </button>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function ouvrirDetailVente(id) {
+    const v = etat.ventes.find(function(x) { return x.id === id; });
+    if (!v) return;
+    _hpVenteSelectionnee = v;
+
+    const d = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
+    const isDette = v.statut_paiement === 'dette';
+    const modeLabel = { cash:'💵 Cash', orange:'🔶 Orange Money', moov:'🔵 Moov Money' }[v.mode_paiement] || '—';
+
+    document.getElementById('dvNumero').textContent  = (v.type_facture || 'FACTURE') + ' ' + (v.numero || '—');
+    document.getElementById('dvDate').textContent    = d.toLocaleString('fr-FR', { weekday:'long', day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    document.getElementById('dvClient').textContent  = v.client_nom || '—';
+    document.getElementById('dvCaissier').textContent= v.caissier_nom || '—';
+    document.getElementById('dvMode').textContent    = modeLabel + (isDette ? ' · 📒 Dette' : ' · ✅ Réglé');
+    document.getElementById('dvTotal').textContent   = formatMontant(v.total) + ' F';
+
+    const acompteRow = document.getElementById('dvAcompteRow');
+    const resteRow   = document.getElementById('dvResteRow');
+    const noteEl     = document.getElementById('dvNote');
+
+    if (isDette) {
+        acompteRow.classList.remove('hidden'); document.getElementById('dvAcompte').textContent = formatMontant(v.acompte || 0) + ' F';
+        resteRow.classList.remove('hidden');   document.getElementById('dvReste').textContent   = formatMontant(v.reste_du || 0) + ' F';
+    } else {
+        acompteRow.classList.add('hidden');
+        resteRow.classList.add('hidden');
+    }
+
+    if (v.note_dette) { noteEl.classList.remove('hidden'); noteEl.textContent = '📝 ' + v.note_dette; }
+    else noteEl.classList.add('hidden');
+
+    // Lignes articles
+    const tbody = document.getElementById('dvLignes');
+    tbody.innerHTML = (v.lignes || []).map(function(l) {
+        return `<tr class="border-b border-slate-800">
+            <td class="py-1.5 text-left">${l.article}</td>
+            <td class="py-1.5 text-center text-slate-400">${l.qte}</td>
+            <td class="py-1.5 text-right font-bold">${formatMontant(l.total)} F</td>
+        </tr>`;
+    }).join('');
+
+    // Boutons actions dettes
+    const btnWA    = document.getElementById('dvBtnWA');
+    const btnPaye  = document.getElementById('dvBtnMarquerPaye');
+    if (isDette) {
+        btnWA.classList.remove('hidden');   btnWA.onclick   = function() { rappelDetteWhatsApp(id); };
+        btnPaye.classList.remove('hidden'); btnPaye.onclick = function() { marquerVentePaye(id); };
+    } else {
+        btnWA.classList.add('hidden');
+        btnPaye.classList.add('hidden');
+    }
+
+    document.getElementById('modalDetailVente').classList.remove('hidden');
+}
+
+function imprimerVenteDetail() {
+    if (_hpVenteSelectionnee) imprimerVente(_hpVenteSelectionnee.id);
+}
+
+// ── Rappel dette WhatsApp
+function rappelDetteWhatsApp(id) {
+    const v = id ? etat.ventes.find(function(x) { return x.id === id; }) : _hpVenteSelectionnee;
+    if (!v) return;
+    const etabNom = document.getElementById('displayNom')?.textContent || '';
+    const etabTel = etat.infosEtab?.telephone || '';
+    const client  = v.client_nom || 'Cher client';
+    const reste   = v.reste_du || (v.total - (v.acompte || 0));
+    const d       = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
+
+    let msg = `Bonjour ${client} 👋\n\n`;
+    msg += `🏪 *${etabNom}* vous rappelle votre facture en attente :\n\n`;
+    msg += `🧾 *${v.type_facture || 'FACTURE'} ${v.numero || ''}*\n`;
+    msg += `📅 Du ${d.toLocaleDateString('fr-FR')}\n`;
+    msg += `💰 Montant total : *${formatMontant(v.total)} F*\n`;
+    if (v.acompte > 0) msg += `✅ Acompte versé : *${formatMontant(v.acompte)} F*\n`;
+    msg += `🔴 *Reste à payer : ${formatMontant(reste)} F*\n\n`;
+    if (v.note_dette) msg += `📝 Note : ${v.note_dette}\n\n`;
+    msg += `Merci de régler dès que possible 🙏`;
+    if (etabTel) msg += `\n📞 Nous contacter : ${etabTel}`;
+
+    const clientTel = v.client_telephone ? v.client_telephone.replace(/\D/g,'') : '';
+    const url = clientTel
+        ? `https://wa.me/${clientTel}?text=${encodeURIComponent(msg)}`
+        : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+// ── Marquer une dette comme payée
+async function marquerVentePaye(id) {
+    const venteId = id || _hpVenteSelectionnee?.id;
+    if (!venteId) return;
+    if (!confirm('Marquer cette facture comme réglée ?')) return;
+    try {
+        await FB.ventes().doc(venteId).update({
+            statut_paiement : 'regle',
+            reste_du        : 0,
+            acompte         : etat.ventes.find(function(v) { return v.id === venteId; })?.total || 0,
+            date_reglement  : firebase.firestore.FieldValue.serverTimestamp()
+        });
+        document.getElementById('modalDetailVente').classList.add('hidden');
+        showToast('✅ Facture marquée comme réglée', 'success');
+    } catch(err) {
+        console.error('marquerVentePaye:', err);
+        alert('Erreur. Réessayez.');
+    }
+}
+
+// ════════════════════════════════════════════════════════
+//  EXPORT CSV
+// ════════════════════════════════════════════════════════
+function exporterCSV() {
+    if (!etat.ventes.length) { alert('Aucune vente à exporter.'); return; }
+    const entetes = ['Numéro', 'Date', 'Caissier', 'Client', 'Mode paiement', 'Statut', 'Total (F)', 'Acompte (F)', 'Reste dû (F)', 'Note'];
+    const lignes  = etat.ventes.map(function(v) {
+        const d = v.createdAt?.toDate ? v.createdAt.toDate() : new Date();
+        return [
+            v.numero || '',
+            d.toLocaleString('fr-FR'),
+            v.caissier_nom || '',
+            v.client_nom || '',
+            v.mode_paiement || 'cash',
+            v.statut_paiement === 'dette' ? 'DETTE' : 'RÉGLÉ',
+            v.total || 0,
+            v.acompte || 0,
+            v.reste_du || 0,
+            v.note_dette || ''
+        ].join(';');
+    });
+    const csv  = [entetes.join(';'), ...lignes].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'ventes_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ════════════════════════════════════════════════════════
+//  PANEL PROPRIÉTAIRE
+// ════════════════════════════════════════════════════════
+function ouvrirPanelProprietaire() {
+    document.getElementById('ownerPanel').classList.remove('hidden');
+    chargerListeCaissiers();
+}
+
+// ════════════════════════════════════════════════════════
+//  ADMIN DÉVELOPPEUR — FONCTIONS COMPLÈTES
+// ════════════════════════════════════════════════════════
+let _devEtablissements = [];
+let _devFiltreActuel   = 'tous';
+let _devEtabSelectionne = null;
+
+function afficherPanelDev() { ouvrirPanelDev(); } // rétro-compat
+
+async function ouvrirPanelDev() {
+    document.getElementById('devPanel').classList.remove('hidden');
+    await chargerTousEtablissements();
+}
+
+function fermerPanelDev() {
+    document.getElementById('devPanel').classList.add('hidden');
+}
+
+async function chargerTousEtablissements() {
+    document.getElementById('devListeEtablissements').innerHTML =
+        '<p class="text-slate-500 text-xs text-center py-8 animate-pulse">Chargement...</p>';
+    try {
+        // ✅ FIX : { source: 'server' } cause "failed-precondition" si la persistence offline est activée
+        // On laisse Firestore décider (cache puis server) — le comportement par défaut est correct
+        const [snapEtabs, snapAbos] = await Promise.all([
+            db.collection('etablissements').get(),
+            db.collection('abonnements').get()
+        ]);
+        const abosMap = {};
+        snapAbos.forEach(doc => { abosMap[doc.id] = doc.data(); });
+
+        _devEtablissements = snapEtabs.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            abonnement: abosMap[doc.id] || null
+        }));
+
+        _calculerStatsAdmin();
+        afficherListeAdmin();
+    } catch (err) {
+        console.error('chargerTousEtablissements — code:', err.code, '| msg:', err.message);
+        const msg = err.code === 'permission-denied'
+            ? '🔒 Accès refusé — mettez à jour les règles Firestore (allow read: if true)'
+            : err.code === 'unavailable'
+            ? '📡 Hors ligne ou Firebase indisponible. Vérifiez votre réseau.'
+            : `❌ Erreur : ${err.code || err.message}`;
+        document.getElementById('devListeEtablissements').innerHTML =
+            `<p class="text-red-400 text-xs text-center py-4">${msg}</p>`;
+    }
+}
+
+function _calculerStatsAdmin() {
+    const now = new Date();
+    let actifs = 0, expires = 0, suspendus = 0;
+    _devEtablissements.forEach(e => {
+        const abo = e.abonnement;
+        if (!abo) return;
+        if (abo.suspendu) { suspendus++; return; }
+        const exp = abo.expiry?.toDate ? abo.expiry.toDate() : new Date(abo.expiry || 0);
+        exp < now ? expires++ : actifs++;
+    });
+    const s = id => document.getElementById(id);
+    if (s('devStatTotal'))    s('devStatTotal').textContent    = _devEtablissements.length;
+    if (s('devStatActifs'))   s('devStatActifs').textContent   = actifs;
+    if (s('devStatExpires'))  s('devStatExpires').textContent  = expires;
+    if (s('devStatSuspendus'))s('devStatSuspendus').textContent= suspendus;
+}
+
+function filtrerEtablissements(filtre) {
+    _devFiltreActuel = filtre;
+    // ✅ OPTIMISÉ : classList.replace → add/remove
+    document.querySelectorAll('.dev-filtre-btn').forEach(btn => {
+        btn.classList.remove('bg-amber-700'); btn.classList.add('bg-slate-700');
+    });
+    const map = { tous:'devFiltreTous', actif:'devFiltreActif', expire:'devFiltreExpire', suspendu:'devFiltreSuspendu', essai:'devFiltreEssai' };
+    const el = document.getElementById(map[filtre]);
+    if (el) { el.classList.remove('bg-slate-700'); el.classList.add('bg-amber-700'); }
+    afficherListeAdmin();
+}
+
+function afficherListeAdmin() {
+    const now  = new Date();
+    const liste = document.getElementById('devListeEtablissements');
+
+    const filtered = _devEtablissements.filter(e => {
+        const abo = e.abonnement;
+        if (!abo) return _devFiltreActuel === 'tous';
+        const exp = abo.expiry?.toDate ? abo.expiry.toDate() : new Date(abo.expiry || 0);
+        const jr  = Math.ceil((exp - now) / 86400000);
+        if (_devFiltreActuel === 'tous')     return true;
+        if (_devFiltreActuel === 'suspendu') return abo.suspendu === true;
+        if (_devFiltreActuel === 'expire')   return jr <= 0 && !abo.suspendu;
+        if (_devFiltreActuel === 'actif')    return jr > 0  && !abo.suspendu;
+        if (_devFiltreActuel === 'essai')    return abo.plan === 'essai';
+        return true;
+    });
+
+    if (!filtered.length) {
+        liste.innerHTML = '<p class="text-slate-500 text-xs text-center py-6">Aucun établissement trouvé</p>';
+        return;
+    }
+
+    liste.innerHTML = filtered.map(e => {
+        const abo     = e.abonnement;
+        const exp     = abo?.expiry?.toDate ? abo.expiry.toDate() : new Date(abo?.expiry || 0);
+        const jr      = abo ? Math.ceil((exp - now) / 86400000) : null;
+        const suspendu = abo?.suspendu === true;
+        const expire  = jr !== null && jr <= 0;
+        const urgence = jr !== null && jr > 0 && jr <= 7;
+
+        let statut, statutClass;
+        if (!abo)       { statut = '❓ Sans abonnement'; statutClass = 'text-slate-400'; }
+        else if (suspendu) { statut = '⏸ Suspendu';       statutClass = 'text-yellow-400'; }
+        else if (expire)   { statut = '🚫 Expiré';         statutClass = 'text-red-400'; }
+        else if (urgence)  { statut = `⚠️ ${jr}j restants`; statutClass = 'text-orange-400'; }
+        else               { statut = `✅ ${jr}j restants`; statutClass = 'text-green-400'; }
+
+        const tel = (e.telephone || '').replace(/\D/g, '');
+        const borderClass = (urgence || expire) ? 'border-orange-800' : 'border-slate-800';
+
+        return `
+        <div class="bg-slate-900 p-3 rounded-xl border ${borderClass}">
+            <div class="flex justify-between items-start mb-2">
+                <div class="flex-1 min-w-0">
+                    <p class="text-white font-black text-sm truncate">${e.nom || e.id}</p>
+                    <p class="text-slate-400 text-[10px]">${e.activite || '—'} · ${e.telephone || '—'}</p>
+                    <p class="text-slate-600 text-[9px] font-mono">${e.id}</p>
+                </div>
+                <div class="text-right ml-2 shrink-0">
+                    <p class="${statutClass} font-bold text-xs">${statut}</p>
+                    ${abo ? `<p class="text-slate-500 text-[9px] capitalize">${abo.plan || '—'}</p>` : ''}
+                    ${abo && jr > 0 ? `<p class="text-slate-500 text-[9px]">exp. ${exp.toLocaleDateString('fr-FR')}</p>` : ''}
+                </div>
+            </div>
+            <div class="flex gap-1.5 flex-wrap mt-1">
+                <button onclick="ouvrirModalActivation('${e.id}', '${(e.nom||e.id).replace(/'/g,'\\\'')}')"
+                        class="bg-green-800 hover:bg-green-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
+                    🔄 Activer
+                </button>
+                ${suspendu
+                    ? `<button onclick="devToggleSuspension('${e.id}', false)"
+                              class="bg-blue-800 hover:bg-blue-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
+                          ▶ Réactiver
+                       </button>`
+                    : `<button onclick="devToggleSuspension('${e.id}', true)"
+                              class="bg-yellow-800 hover:bg-yellow-700 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
+                          ⏸ Suspendre
+                       </button>`
+                }
+                <button onclick="devDesactiver('${e.id}')"
+                        class="bg-red-900 hover:bg-red-800 text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
+                    🚫 Désactiver
+                </button>
+                ${tel
+                    ? `<button onclick="devEnvoyerRappel('${tel}', '${(e.nom||e.id).replace(/'/g,'\\\'').replace(/"/g,'&quot;')}', ${jr})"
+                              class="bg-[#25D366] hover:bg-[#128C7E] text-white text-[9px] px-2.5 py-1 rounded-full font-bold transition-colors">
+                          📱 WhatsApp
+                       </button>`
+                    : ''
+                }
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function ouvrirModalActivation(etabId, nom) {
+    _devEtabSelectionne = etabId;
+    document.getElementById('devModalAboNom').textContent = nom;
+    document.getElementById('devModalAbo').classList.remove('hidden');
+}
+
+async function confirmerActivation() {
+    const plan = document.querySelector('input[name="devPlan"]:checked')?.value;
+    if (!plan || !_devEtabSelectionne) return;
+
+    const durees = { essai: 7, mensuel: 30, trimestriel: 90, annuel: 365 };
+    const jours  = durees[plan] || 30;
+    const expiry = new Date(Date.now() + jours * 24 * 60 * 60 * 1000);
+
+    try {
+        await db.collection('abonnements').doc(_devEtabSelectionne).set({
+            plan,
+            statut   : 'actif',
+            suspendu : false,
+            expiry   : firebase.firestore.Timestamp.fromDate(expiry),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        document.getElementById('devModalAbo').classList.add('hidden');
+        await chargerTousEtablissements();
+        alert(`✅ Abonnement "${plan}" activé\nExpiration : ${expiry.toLocaleDateString('fr-FR')}`);
+    } catch (err) {
+        console.error('confirmerActivation:', err);
+        alert('Erreur lors de l\'activation. Réessayez.');
+    }
+}
+
+async function devToggleSuspension(etabId, suspendre) {
+    const msg = suspendre ? 'Suspendre cet établissement ?' : 'Réactiver cet établissement ?';
+    if (!confirm(msg)) return;
+    try {
+        await db.collection('abonnements').doc(etabId).update({
+            suspendu : suspendre,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        await chargerTousEtablissements();
+    } catch (err) {
+        console.error('devToggleSuspension:', err);
+        alert('Erreur. Réessayez.');
+    }
+}
+
+async function devDesactiver(etabId) {
+    if (!confirm('⚠️ Désactiver définitivement cet abonnement ?\nL\'établissement perdra l\'accès immédiatement.')) return;
+    try {
+        await db.collection('abonnements').doc(etabId).update({
+            statut   : 'inactif',
+            suspendu : false,
+            expiry   : firebase.firestore.Timestamp.fromDate(new Date()),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        await chargerTousEtablissements();
+    } catch (err) {
+        console.error('devDesactiver:', err);
+        alert('Erreur. Réessayez.');
+    }
+}
+
+function devEnvoyerRappel(tel, nom, joursRestants) {
+    // Normaliser le numéro burkinabè (+226)
+    let numero = tel.replace(/\D/g, '');
+    if (!numero.startsWith('226')) numero = '226' + numero;
+
+    let msg;
+    if (joursRestants !== null && joursRestants <= 0) {
+        msg =
+`Bonjour ${nom} 👋
+
+Votre abonnement *DigitalFacture Pro* a expiré.
+
+Renouvelez maintenant pour retrouver l'accès à votre caisse :
+• Mensuel : *5 000 F* (30 jours)
+• Trimestriel : *13 500 F* (90 jours) ⭐
+• Annuel : *48 000 F* (365 jours)
+
+Répondez *OUI* pour recevoir les instructions de paiement. 🙏`;
+    } else {
+        msg =
+`Bonjour ${nom} 👋
+
+Votre abonnement *DigitalFacture Pro* expire dans *${joursRestants} jour(s)*.
+
+Renouvelez avant expiration pour ne pas interrompre votre activité :
+• Mensuel : *5 000 F*
+• Trimestriel : *13 500 F* ⭐ Populaire
+• Annuel : *48 000 F*
+
+Répondez *OUI* pour payer maintenant. 🙏`;
+    }
+    window.open(`https://wa.me/${numero}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+}
+
+// ════════════════════════════════════════════════════════
+//  RENOUVELLEMENT
+// ════════════════════════════════════════════════════════
+function ouvrirModalRenouvellement() {
+    const ref = `${ETABLISSEMENT_ID.toUpperCase().slice(0,6)}-${Date.now().toString().slice(-6)}`;
+    document.getElementById('refPaiement').textContent = ref;
+    document.getElementById('modalRenouvellement').classList.remove('hidden');
+}
+
+async function soumettreRenouvellement() {
+    if (!_tryLock('renouvellement')) return; // ✅ Anti-double-submit
+    const plan = document.querySelector('input[name="planRenouvellement"]:checked')?.value;
+    if (!plan) { _unlock('renouvellement'); alert('Choisissez un plan'); return; }
+    try {
+        await db.collection('demandes_renouvellement').add({
+            etablissement_id : ETABLISSEMENT_ID,
+            plan,
+            ref              : document.getElementById('refPaiement').textContent,
+            statut           : 'en_attente',
+            createdAt        : firebase.firestore.FieldValue.serverTimestamp()
+        });
+        document.getElementById('modalRenouvellement').classList.add('hidden');
+        alert('✅ Demande envoyée ! Validation sous 24h après réception du paiement.');
+    } catch (err) {
+        console.error('soumettreRenouvellement:', err);
+        alert('Erreur lors de l\'envoi. Réessayez.');
+    } finally {
+        _unlock('renouvellement');
+    }
+}
+
+// ════════════════════════════════════════════════════════
+//  BLOCAGE ACCÈS
+// ════════════════════════════════════════════════════════
+function bloquerAcces(code, titre, message) {
+    masquerLoading();
+    document.getElementById('licenceBlockIcon').textContent  = code === 'expired' ? '⏰' : code === 'suspended' ? '⏸' : '🚫';
+    document.getElementById('licenceBlockTitre').textContent = titre;
+    document.getElementById('licenceBlockMessage').textContent = message;
+    document.getElementById('licenceBlockModal').classList.remove('hidden');
+}
+
+function masquerLoading() {
+    const ls = document.getElementById('loadingScreen');
+    if (ls) ls.classList.add('hidden');
+}
+
+function setLoadingMessage(msg) {
+    document.getElementById('loadingMessage').textContent = msg;
+}
+
+// ════════════════════════════════════════════════════════
+//  UTILITAIRES — NOMBRE EN LETTRES (simplifié)
+// ════════════════════════════════════════════════════════
+function nombreEnLettres(n) {
+    n = Math.round(n);
+    if (n === 0) return 'zéro';
+    const u = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
+               'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
+    const d = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
+    function conv(nb) {
+        if (nb < 20)  return u[nb];
+        if (nb < 100) {
+            const diz = Math.floor(nb / 10), uni = nb % 10;
+            if (diz === 7 || diz === 9) return d[diz] + (uni === 1 && diz === 7 ? '-et-' : '-') + u[10 + uni];
+            return d[diz] + (uni === 1 && diz < 8 ? '-et-' : uni ? '-' : '') + (uni ? u[uni] : '');
+        }
+        const c = Math.floor(nb / 100);
+        // ✅ OPTIMISÉ : "cent" seul (100) ne prend pas de 's' — seulement les multiples sans suite
+        return (c > 1 ? u[c] + '-cent' : 'cent') + (nb % 100 ? '-' + conv(nb % 100) : (c > 1 ? 's' : ''));
+    }
+    let res = '';
+    if (n >= 1000000) { res += conv(Math.floor(n / 1000000)) + '-million' + (Math.floor(n / 1000000) > 1 ? 's' : '') + (n % 1000000 ? '-' : ''); n %= 1000000; }
+    if (n >= 1000)    { res += (Math.floor(n / 1000) > 1 ? conv(Math.floor(n / 1000)) + '-' : '') + 'mille' + (n % 1000 ? '-' : ''); n %= 1000; }
+    if (n > 0) res += conv(n);
+    return res;
+}
+</script>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL IMPRESSION BLE THERMIQUE
+═══════════════════════════════════════════════════════ -->
+<div id="bleModal" class="hidden fixed inset-0 bg-black/90 z-[300] flex items-end justify-center p-4">
+    <div class="bg-slate-900 rounded-2xl p-5 w-full max-w-sm border border-slate-700 shadow-2xl mb-4">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <h3 class="text-white font-black text-base">🖨️ Impression thermique</h3>
+                <p id="bleStatutTexte" class="text-slate-400 text-xs mt-0.5">Non connecté</p>
+            </div>
+            <button onclick="fermerModalBLE()"
+                    class="text-slate-500 hover:text-white text-xl font-black transition-colors">✕</button>
+        </div>
+
+        <!-- Indicateur statut -->
+        <div id="bleStatutBarre" class="flex items-center gap-2 bg-slate-800 p-2.5 rounded-xl mb-4">
+            <div id="blePoint" class="w-3 h-3 rounded-full bg-slate-600 shrink-0"></div>
+            <p id="bleNomAppareil" class="text-slate-400 text-xs font-bold truncate">Aucune imprimante mémorisée</p>
+            <button id="bleOublierBtn" onclick="oublierImprimante()"
+                    class="hidden ml-auto text-red-400 hover:text-red-300 text-[10px] font-bold shrink-0 transition-colors">
+                ✕ Oublier
+            </button>
+        </div>
+
+        <!-- Boutons -->
+        <div class="space-y-2">
+            <button id="bleBtnConnecter" onclick="connecterImprimante()"
+                    class="w-full bg-amber-600 hover:bg-amber-500 active:scale-95 text-white py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2">
+                <span>🔍</span><span>Rechercher imprimante BLE</span>
+            </button>
+            <button id="bleBtnImprimer" onclick="confirmerImpression()" disabled
+                    class="w-full bg-slate-700 text-slate-500 py-3 rounded-xl font-black text-sm cursor-not-allowed flex items-center justify-center gap-2">
+                <span>🖨️</span><span>Imprimer le ticket</span>
+            </button>
+            <button onclick="impressionFallback()"
+                    class="w-full bg-slate-800 hover:bg-slate-700 text-slate-400 py-2.5 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-2">
+                <span>📄</span><span>Imprimer via le système (iOS / fallback)</span>
+            </button>
+        </div>
+
+        <!-- Copies -->
+        <div class="flex items-center justify-between mt-3 px-1">
+            <span class="text-slate-400 text-xs">Nombre de copies :</span>
+            <div class="flex items-center gap-2">
+                <button onclick="bleChangerCopies(-1)"
+                        class="w-7 h-7 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-black text-sm transition-colors">−</button>
+                <span id="bleCopies" class="text-white font-black text-sm w-4 text-center">1</span>
+                <button onclick="bleChangerCopies(1)"
+                        class="w-7 h-7 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-black text-sm transition-colors">+</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODULE BLE THERMIQUE — ESC/POS
+═══════════════════════════════════════════════════════ -->
+<script>
+// ── Profils UUID des imprimantes thermiques BLE génériques
+const BLE_PROFILES = [
+    { service: '000018f0-0000-1000-8000-00805f9b34fb', char: '00002af1-0000-1000-8000-00805f9b34fb' },
+    { service: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', char: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f' },
+    { service: '49535343-fe7d-4ae5-8fa9-9fafd205e455', char: '49535343-8841-43f4-a818-c20a01cfb9e0' },
+    { service: '0000ff00-0000-1000-8000-00805f9b34fb', char: '0000ff02-0000-1000-8000-00805f9b34fb' },
+];
+
+// ── État global imprimante
+let _bleDevice    = null;
+let _bleChar      = null;
+let _bleCopies    = 1;
+let _bleVenteData = null; // vente à imprimer
+
+const PW = 48; // largeur ticket 80mm = 48 chars police normale
+
+// ── Commandes ESC/POS
+const ESC = 0x1B, GS = 0x1D;
+const CMD = {
+    INIT         : [ESC, 0x40],
+    ALIGN_LEFT   : [ESC, 0x61, 0x00],
+    ALIGN_CENTER : [ESC, 0x61, 0x01],
+    ALIGN_RIGHT  : [ESC, 0x61, 0x02],
+    BOLD_ON      : [ESC, 0x45, 0x01],
+    BOLD_OFF     : [ESC, 0x45, 0x00],
+    DOUBLE_SIZE  : [ESC, 0x21, 0x30],
+    NORMAL_SIZE  : [ESC, 0x21, 0x00],
+    LF           : [0x0A],
+    CUT          : [GS, 0x56, 0x41, 0x03],
+};
+
+// ── Helpers texte
+function _norm(str) {
+    return String(str || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\x20-\x7E]/g, '?');
+}
+function _pad(str, width, align = 'left') {
+    const s = _norm(str).substring(0, width);
+    if (align === 'right')  return s.padStart(width);
+    if (align === 'center') {
+        const p = Math.max(0, width - s.length);
+        return ' '.repeat(Math.floor(p/2)) + s + ' '.repeat(Math.ceil(p/2));
+    }
+    return s.padEnd(width);
+}
+function _toBytes(str) {
+    const a = [];
+    for (let i = 0; i < str.length; i++) a.push(str.charCodeAt(i) & 0xFF);
+    return a;
+}
+function _line(str) { return _toBytes(_norm(str) + '\n'); }
+function _cmd(...c)  { return [].concat(...c); }
+
+// ── Générateur ticket ESC/POS
+function genererTicketESCPOS(vente, etab) {
+    const S1 = '='.repeat(PW), S2 = '-'.repeat(PW);
+    const b  = [];
+    const add = (...parts) => { for (const p of parts) b.push(...p); };
+
+    // Init
+    add(CMD.INIT, CMD.ALIGN_CENTER);
+
+    // LOGO TEXTE — nom établissement en grand
+    add(CMD.BOLD_ON, CMD.DOUBLE_SIZE);
+    add(_line(etab.nom || 'MON COMMERCE'));
+    add(CMD.NORMAL_SIZE, CMD.BOLD_OFF);
+    if (etab.activite)  add(_line(etab.activite));
+    const contact = [etab.ville, etab.telephone].filter(Boolean).join('  ');
+    if (contact)        add(_line(contact));
+
+    add(CMD.ALIGN_LEFT, CMD.BOLD_ON);
+    add(_line(S1));
+    add(CMD.BOLD_OFF);
+
+    // INFO FACTURE
+    const d        = vente.createdAt?.toDate ? vente.createdAt.toDate() : new Date();
+    const dateStr  = d.toLocaleDateString('fr-FR');
+    const heureStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    add(_line(_pad('Date: ' + dateStr, 26) + _pad(heureStr, PW - 26, 'right')));
+    add(CMD.BOLD_ON);
+    add(_line((vente.type_facture || 'FACTURE') + ' N: ' + _norm(vente.numero || '')));
+    add(CMD.BOLD_OFF);
+    if (vente.client_nom) add(_line('Client : ' + vente.client_nom));
+    add(_line('Caissier: ' + _norm(vente.caissier_nom || '')));
+    add(_line(S2));
+
+    // COLONNES
+    add(CMD.BOLD_ON);
+    add(_line(_pad('ARTICLE', 26) + _pad('QTE', 6, 'right') + _pad('MONTANT', 16, 'right')));
+    add(CMD.BOLD_OFF);
+    add(_line(S2));
+
+    // LIGNES ARTICLES
+    (vente.lignes || []).forEach(l => {
+        const art  = _pad(String(l.article || ''), 26);
+        const qte  = _pad(String(l.qte || 1), 6, 'right');
+        const mont = _pad(formatMontant(l.total || 0), 16, 'right');
+        add(_line(art + qte + mont));
+    });
+
+    add(_line(S2));
+
+    // TOTAL
+    add(CMD.BOLD_ON, CMD.DOUBLE_SIZE, CMD.ALIGN_RIGHT);
+    add(_line('TOTAL: ' + formatMontant(vente.total || 0) + ' F'));
+    add(CMD.NORMAL_SIZE, CMD.BOLD_OFF, CMD.ALIGN_LEFT);
+    add(_line(S1));
+
+    // FOOTER
+    add(CMD.ALIGN_CENTER);
+    add(_line('Merci de votre confiance !'));
+    add(_line('Powered by FactuBF'));
+    add(CMD.ALIGN_LEFT);
+
+    // Feed + Coupe
+    add(CMD.LF, CMD.LF, CMD.LF, CMD.LF, CMD.CUT);
+
+    return b;
+}
+
+// ── Envoi BLE par chunks de 200 octets
+async function _bleWrite(data) {
+    if (!_bleChar) throw new Error('Non connecte');
+    const CHUNK = 200;
+    for (let i = 0; i < data.length; i += CHUNK) {
+        await _bleChar.writeValue(new Uint8Array(data.slice(i, i + CHUNK)));
+        await new Promise(r => setTimeout(r, 60));
+    }
+}
+
+// ── Connexion imprimante BLE
+async function connecterImprimante() {
+    if (!navigator.bluetooth) {
+        alert('Web Bluetooth non disponible.\nUtilisez Chrome sur Android (HTTPS requis apres deploiement).');
+        return false;
+    }
+    _mettreAJourStatutBLE('Recherche...', 'searching');
+    try {
+        const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: BLE_PROFILES.map(p => p.service)
+        });
+        device.addEventListener('gattserverdisconnected', () => {
+            _bleDevice = null; _bleChar = null;
+            _mettreAJourStatutBLE('Deconnecte', 'disconnected');
+        });
+        _mettreAJourStatutBLE('Connexion...', 'connecting');
+        const server = await device.gatt.connect();
+
+        let ok = false;
+        for (const profile of BLE_PROFILES) {
+            try {
+                const svc  = await server.getPrimaryService(profile.service);
+                const chr  = await svc.getCharacteristic(profile.char);
+                _bleDevice = device;
+                _bleChar   = chr;
+                ok = true;
+                break;
+            } catch (_) { continue; }
+        }
+        if (!ok) throw new Error('Imprimante non reconnue. Essayez de rapprocher l\'appareil.');
+
+        const nom = device.name || 'Imprimante BLE';
+        localStorage.setItem('dfp_printer_name', nom);
+        _mettreAJourStatutBLE('Connecte : ' + nom, 'connected');
+        return true;
+    } catch (err) {
+        if (err.name !== 'NotFoundError') {
+            alert('Echec : ' + err.message);
+        }
+        _mettreAJourStatutBLE('Non connecte', 'disconnected');
+        return false;
+    }
+}
+
+// ── Statut visuel
+function _mettreAJourStatutBLE(texte, etat) {
+    const point   = document.getElementById('blePoint');
+    const statut  = document.getElementById('bleStatutTexte');
+    const nom     = document.getElementById('bleNomAppareil');
+    const btn     = document.getElementById('bleBtnImprimer');
+    const oublier = document.getElementById('bleOublierBtn');
+    const couleurs = { connected: 'bg-green-500', connecting: 'bg-yellow-500 animate-pulse',
+                       searching: 'bg-blue-500 animate-pulse', disconnected: 'bg-slate-600' };
+    if (point)   { point.className = 'w-3 h-3 rounded-full shrink-0 ' + (couleurs[etat] || couleurs.disconnected); }
+    if (statut)  statut.textContent = texte;
+    const saved = localStorage.getItem('dfp_printer_name');
+    if (nom)     nom.textContent = _bleChar ? (_bleDevice?.name || 'Imprimante BLE') : (saved || 'Aucune imprimante memorisee');
+    if (btn) {
+        const pret = !!_bleChar;
+        btn.disabled = !pret;
+        btn.className = pret
+            ? 'w-full bg-green-600 hover:bg-green-500 active:scale-95 text-white py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2'
+            : 'w-full bg-slate-700 text-slate-500 py-3 rounded-xl font-black text-sm cursor-not-allowed flex items-center justify-center gap-2';
+    }
+    if (oublier) oublier.classList.toggle('hidden', !saved);
+}
+
+// ── Copie nombre
+function bleChangerCopies(delta) {
+    _bleCopies = Math.max(1, Math.min(5, _bleCopies + delta));
+    const el = document.getElementById('bleCopies');
+    if (el) el.textContent = _bleCopies;
+}
+
+// ── Ouvrir modal impression (depuis facture ou historique)
+function ouvrirModalImpression(vente) {
+    _bleVenteData = vente;
+    _bleCopies    = 1;
+    const el = document.getElementById('bleCopies');
+    if (el) el.textContent = '1';
+    _mettreAJourStatutBLE(_bleChar ? 'Connecte : ' + (_bleDevice?.name || 'BLE') : 'Non connecte',
+                          _bleChar ? 'connected' : 'disconnected');
+    document.getElementById('bleModal').classList.remove('hidden');
+}
+
+function fermerModalBLE() {
+    document.getElementById('bleModal').classList.add('hidden');
+    _bleVenteData = null;
+}
+
+function oublierImprimante() {
+    localStorage.removeItem('dfp_printer_name');
+    _bleDevice = null; _bleChar = null;
+    _mettreAJourStatutBLE('Non connecte', 'disconnected');
+}
+
+// ── Impression finale (bouton Imprimer du modal)
+async function confirmerImpression() {
+    if (!_bleVenteData) return;
+    if (!_bleChar) { alert('Connectez d\'abord une imprimante.'); return; }
+
+    const etab   = etat?.etablissement || {};
+    const ticket = genererTicketESCPOS(_bleVenteData, etab);
+
+    const btn = document.getElementById('bleBtnImprimer');
+    if (btn) { btn.disabled = true; btn.querySelector('span:last-child').textContent = 'Impression...'; }
+
+    try {
+        for (let i = 0; i < _bleCopies; i++) {
+            await _bleWrite(ticket);
+            if (i < _bleCopies - 1) await new Promise(r => setTimeout(r, 500));
+        }
+        fermerModalBLE();
+    } catch (err) {
+        console.error('Impression BLE:', err);
+        alert('Erreur impression : ' + err.message + '\nReconnectez l\'imprimante.');
+        _bleDevice = null; _bleChar = null;
+        _mettreAJourStatutBLE('Deconnecte', 'disconnected');
+    } finally {
+        if (btn) { btn.disabled = false; btn.querySelector('span:last-child').textContent = 'Imprimer le ticket'; }
+    }
+}
+
+// ── Fallback CSS print (iOS / navigateurs sans Web Bluetooth)
+function impressionFallback() {
+    fermerModalBLE();
+    window.print();
+}
+
+// ── Imprimer la facture en cours (depuis la caisse)
+function imprimerFactureActuelle() {
+    const lignes = [];
+    document.querySelectorAll('#lignes-facture tr').forEach(tr => {
+        const art = tr.querySelector('input[type="text"]')?.value?.trim();
+        const qte = parseFloat(tr.querySelector('.qte')?.value) || 0;
+        const pu  = parseFloat(tr.querySelector('.pu')?.value)  || 0;
+        if (art && qte > 0 && pu > 0) lignes.push({ article: art, qte, pu, total: qte * pu });
+    });
+    if (!lignes.length) { alert('Aucun article a imprimer.'); return; }
+    const total    = parseFloat(document.getElementById('grandTotal')?.textContent?.replace(/\s/g,'').replace(',','.')) || 0;
+    const numero   = document.getElementById('factureNumero')?.textContent || '';
+    const venteObj = {
+        numero,
+        caissier_nom : etat?.caissierActif?.nom || '',
+        client_nom   : document.getElementById('clientNom')?.value?.trim() || '',
+        type_facture : document.getElementById('typeFacture')?.value || 'FACTURE',
+        lignes,
+        total,
+        createdAt    : { toDate: () => new Date() }
+    };
+    ouvrirModalImpression(venteObj);
+}
+
+// ── Imprimer une vente de l'historique
+function imprimerVente(venteId) {
+    const vente = etat?.ventes?.find(v => v.id === venteId);
+    if (!vente) { alert('Vente introuvable.'); return; }
+    ouvrirModalImpression(vente);
+}
+</script>
+
+<!-- Service Worker PWA (optionnel — sw.js requis sur le serveur) -->
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then(r => console.log('✅ SW actif:', r.scope))
+            .catch(() => {}); // sw.js absent en dev — silencieux
+    });
+}
+</script>
+</body>
+</html>
